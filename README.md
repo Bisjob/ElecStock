@@ -89,7 +89,11 @@ Docker for the database.
    i.e. the PC seen from the emulator; a phone sets the server address in Settings):
    - Windows: `dotnet build src/ElecStock.Appli -t:Run -f net10.0-windows10.0.19041.0`;
    - Android emulator: `dotnet build src/ElecStock.Appli -t:Run -f net10.0-android "-p:AdbTarget=-s emulator-5554"`
-     (`adb devices` lists the targets).
+     (`adb devices` lists the targets);
+   - Windows PC, release: `dotnet publish src/ElecStock.Appli -f net10.0-windows10.0.19041.0 -c Release
+     -p:PublishProfile=Windows -p:Version=X.Y.Z -o publish/ElecStock` gives a folder to zip and copy, run
+     `ElecStock.Appli.exe` (.NET and the Windows App SDK inside, nothing to install). Not a single exe: see
+     `Properties/PublishProfiles/Windows.pubxml`. The CI builds the same zip for each release (docs/ci.md).
 4. Tests: `dotnet test --project tests/ElecStock.Tests` (the service tests use the `elecstock_test`
    database of the dev compose, recreated for each test, and are skipped when it is not running; with
    `ELECSTOCK_TEST_DB` set, as in the CI, they fail instead).

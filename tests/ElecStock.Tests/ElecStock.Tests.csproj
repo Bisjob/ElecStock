@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\ElecStock.Core\ElecStock.Core.csproj" />
+		<ProjectReference Include="..\..\src\ElecStock.Data\ElecStock.Data.csproj" />
+	</ItemGroup>
+
+</Project>

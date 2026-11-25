@@ -1,0 +1,32 @@
+<Project>
+	<PropertyGroup>
+		<Authors>Bisjob</Authors>
+		<Product>ElecStock</Product>
+		<Copyright>© 2026 Bisjob. MIT License.</Copyright>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+		<Version>1.0.0</Version>
+
+		<!-- Framework -->
+		<TargetFramework Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+		<!-- Test project detection -->
+		<IsTestProject>$(MSBuildProjectName.EndsWith('.Tests'))</IsTestProject>
+	</PropertyGroup>
+
+	<ItemGroup Condition="$(IsTestProject) == 'True'">
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="xunit.v3" />
+		<PackageReference Include="xunit.runner.visualstudio">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+	</ItemGroup>
+
+	<ItemGroup Condition="$(IsTestProject) == 'True'">
+		<Using Include="Xunit" />
+	</ItemGroup>
+</Project>

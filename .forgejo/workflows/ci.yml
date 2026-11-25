@@ -1,0 +1,324 @@
+name: CI
+
+# Runs for a push on master, a version tag "vX.Y.Z", a pull request, or by hand (Run workflow); a push on another branch
+# starts nothing (its pull request builds it). Builds the server and runs the tests (the service tests on a PostgreSQL
+# service). The server image, built by the .NET SDK (container settings in ElecStock.Server.csproj, no Dockerfile), is
+# pushed to the container registry of this Forgejo for a version tag (tags "X.Y.Z", "X.Y" and "latest") and for master
+# (tag "edge"); pull requests and manual runs only check that it builds. The Android app (MAUI) is built for a release
+# tag and signed, then added to a self-hosted F-Droid repository when the variable FDROID_DIR is set; a manual run
+# builds it too (artifact only). The public releases (ghcr.io image, APK on GitHub) come from .github/workflows/release.yml.
+#
+# Needs a runner labelled "ubuntu-latest" that runs its jobs in containers (for the PostgreSQL service), the secret
+# REGISTRY_TOKEN (and, when the runner reaches Forgejo by another name than the machines pulling the image, the variable
+# REGISTRY) to publish the image, and the secrets ANDROID_KEYSTORE and ANDROID_KEYSTORE_PASSWORD to sign the app.
+# Optional: the variable FDROID_DIR (and the host's Docker socket in the jobs) to publish it on F-Droid. See docs/ci.md.
+
+on:
+  push:
+    # master only: a branch with a pull request is already built by the pull request.
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    # The service tests drop and migrate the database elecstock_test for each test. Same image and credentials as the
+    # dev database (postgres-compose/); the user is superuser, so the migrations create the database.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: elecstock
+          POSTGRES_PASSWORD: password
+    env:
+      # Set explicitly, so the service tests fail instead of skipping themselves when the database does not answer.
+      ELECSTOCK_TEST_DB: Host=postgres;Port=5432;Database=elecstock_test;Username=elecstock;Password=password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            base=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n 1)
+            version="${base}-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      # Not mirrored by Forgejo (data.forgejo.org): taken from GitHub.
+      - uses: https://github.com/actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the server
+        run: dotnet build src/ElecStock.Server -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      # PostgreSQL only listens on TCP once its first start (initdb) is over.
+      - name: Wait for PostgreSQL
+        shell: bash
+        run: |
+          for _ in $(seq 60); do
+            if (exec 3<>/dev/tcp/postgres/5432) 2>/dev/null; then
+              echo "PostgreSQL answers on postgres:5432"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The postgres service does not answer on postgres:5432."
+          exit 1
+
+      - name: Test
+        shell: bash
+        run: |
+          failed=0
+          for project in $(find . -path '*/tests/*' -name '*.Tests.csproj' | sort); do
+            echo "::group::$project"
+            if ! dotnet test --project "$project" -c Release \
+                --results-directory TestResults --results-directory-layout per-module --report-xunit-junit; then
+              failed=1
+              echo "::error::Tests failed in $project"
+            fi
+            echo "::endgroup::"
+          done
+          exit $failed
+
+      # actions/upload-artifact@v4 does not work with Forgejo; its patched fork does.
+      - name: Upload test results
+        if: always()
+        uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  docker:
+    name: docker image
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish settings
+        id: publish
+        shell: bash
+        env:
+          REGISTRY: ${{ vars.REGISTRY }}
+          SERVER_URL: ${{ github.server_url }}
+          OWNER: ${{ github.repository_owner }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VERSION: ${{ needs.build-test.outputs.version }}
+        run: |
+          # The registry is this Forgejo, under the name the machines pulling the image use: the variable REGISTRY
+          # ("host:port") when set, since the jobs may reach Forgejo by another name (its container name, e.g.
+          # forgejo:3000), else the host of the server's address. Image names are lowercase.
+          registry="${REGISTRY:-$SERVER_URL}"
+          registry="${registry#*://}"
+          registry="${registry%%/*}"
+          repository="${OWNER,,}/elecstock-server"
+
+          # MSBuild list: tags separated by ";".
+          tags=""
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/v* ]]; then
+            tags="$VERSION"
+            # A pre-release (1.1.0-rc.1) gets its own tag only.
+            if [[ "$VERSION" != *-* ]]; then
+              tags="$tags;${VERSION%.*};latest"
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH:-master}" ]]; then
+            # master (the default branch): its last commit as "edge".
+            tags="edge"
+          fi
+
+          if [[ -n "$tags" ]]; then push=true; else push=false; fi
+          {
+            echo "registry=$registry"
+            echo "repository=$repository"
+            echo "push=$push"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+          echo "Image: $registry/$repository · push: $push · tags: ${tags:-none}"
+
+      - name: Check the registry token
+        if: steps.publish.outputs.push == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::error::Add the secret REGISTRY_TOKEN (an access token with the write:package scope) to publish the image."
+            exit 1
+          fi
+
+      - uses: https://github.com/actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The .NET SDK pulls the base image, adds the published server and pushes the result to the registry itself: no
+      # Docker involved. linux-x64 only (the GitHub release adds linux-arm64). Other builds write the image to an archive,
+      # pushed nowhere.
+      # PublishRepositoryUrl lets Source Link label the image with the repository and the commit.
+      - name: Build and push the image
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+          PUSH: ${{ steps.publish.outputs.push }}
+          REGISTRY: ${{ steps.publish.outputs.registry }}
+          REPOSITORY: ${{ steps.publish.outputs.repository }}
+          TAGS: ${{ steps.publish.outputs.tags }}
+          # The registry of this Forgejo is served over plain HTTP.
+          DOTNET_CONTAINER_INSECURE_REGISTRIES: ${{ steps.publish.outputs.registry }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_UNAME: ${{ github.repository_owner }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_PWORD: ${{ steps.publish.outputs.push == 'true' && secrets.REGISTRY_TOKEN || '' }}
+        run: |
+          args=(src/ElecStock.Server -c Release -r linux-x64 -t:PublishContainer
+            "-p:Version=$VERSION" "-p:ContainerRepository=$REPOSITORY" -p:PublishRepositoryUrl=true)
+          if [[ "$PUSH" == "true" ]]; then
+            # The quotes keep the ";" of the list inside the property.
+            args+=("-p:ContainerRegistry=$REGISTRY" "-p:ContainerImageTags=\"$TAGS\"")
+          else
+            args+=("-p:ContainerArchiveOutputPath=$RUNNER_TEMP/elecstock-server.tar.gz")
+          fi
+          dotnet publish "${args[@]}"
+
+  android:
+    needs: build-test
+    # A release tag (vX.Y.Z, not a pre-release) builds the app and adds it to the F-Droid repository (when FDROID_DIR is
+    # set); a manual run only builds it (artifact "android-apk"), to check the build without releasing.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-'))
+    runs-on: ubuntu-latest
+    env:
+      # The package of AndroidManifest.xml (lowercase), which also names the APK.
+      APP_ID: com.bisjob.elecstock
+      APK: src/ElecStock.Appli/bin/Release/net10.0-android/publish/com.bisjob.elecstock-Signed.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Android version
+        id: version
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+        run: |
+          # versionName: the version. versionCode: X*10000 + Y*100 + Z, so that it goes up with every release (the
+          # F-Droid client only offers a higher versionCode as an update). A manual run takes the code of its base version.
+          IFS=. read -r major minor patch <<< "${VERSION%%-*}"
+          if (( minor > 99 || patch > 99 )); then
+            echo "::error::Version $VERSION: minor and patch must stay below 100 for the versionCode."
+            exit 1
+          fi
+          code=$(( major * 10000 + minor * 100 + patch ))
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "versionName: $VERSION · versionCode: $code"
+
+      - name: Signing key
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE: ${{ github.event_name == 'push' }}
+        run: |
+          # Every release must be signed with the same key: the F-Droid client does not update an app signed by another.
+          if [[ -z "$ANDROID_KEYSTORE" || -z "$ANDROID_KEYSTORE_PASSWORD" ]]; then
+            if [[ "$RELEASE" == "true" ]]; then
+              echo "::error::Add the secrets ANDROID_KEYSTORE (the keystore, base64) and ANDROID_KEYSTORE_PASSWORD to publish the app."
+              exit 1
+            fi
+            echo "::warning::No ANDROID_KEYSTORE: this APK is signed with a throwaway debug key and cannot update the released app."
+            echo "keystore=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keystore="$RUNNER_TEMP/elecstock.keystore"
+          base64 -d <<< "$ANDROID_KEYSTORE" > "$keystore"
+          echo "keystore=$keystore" >> "$GITHUB_OUTPUT"
+
+      # Temurin, not Microsoft's OpenJDK: setup-java reads Microsoft's version list from api.github.com with the job's
+      # GITHUB_TOKEN, a Forgejo token there, which GitHub refuses ("Could not load manifest"). Temurin's comes from
+      # api.adoptium.net.
+      - uses: https://github.com/actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: https://github.com/actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Nothing is cached between runs: the workload and the Android packages are downloaded each time (~1 GB).
+      - name: Install the MAUI workload and the Android SDK
+        shell: bash
+        run: |
+          dotnet workload install maui-android
+          # The Android packages the app needs (platform, build-tools, platform-tools), licenses accepted.
+          sdk="$RUNNER_TEMP/android-sdk"
+          dotnet build src/ElecStock.Appli -t:InstallAndroidDependencies -f net10.0-android \
+            "-p:AndroidSdkDirectory=$sdk" "-p:JavaSdkDirectory=$JAVA_HOME" -p:AcceptAndroidSDKLicenses=True
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+      - name: Build the APK
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || 'elecstock' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          args=(src/ElecStock.Appli -f net10.0-android -c Release "-p:AndroidSdkDirectory=$ANDROID_HOME"
+            "-p:Version=$VERSION" "-p:ApplicationDisplayVersion=$VERSION" "-p:ApplicationVersion=$VERSION_CODE")
+          if [[ -n "$KEYSTORE" ]]; then
+            # A PKCS12 keystore (keytool's default) has one password for the store and the key. "env:" keeps it off the
+            # command line.
+            args+=(-p:AndroidKeyStore=true "-p:AndroidSigningKeyStore=$KEYSTORE" "-p:AndroidSigningKeyAlias=$KEY_ALIAS"
+              -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyPass=env:ANDROID_KEYSTORE_PASSWORD)
+          fi
+          dotnet publish "${args[@]}"
+          ls -l "$APK"
+
+      - name: Upload the APK
+        uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ${{ env.APK }}
+
+      - name: Publish to the F-Droid repository
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          # Path ON THE HOST of the F-Droid folder (the one an F-Droid server serves, mounted on /repo). Not set: no F-Droid.
+          FDROID_DIR: ${{ vars.FDROID_DIR }}
+          # An image with fdroidserver, present on the runner's host.
+          FDROID_IMAGE: ${{ vars.FDROID_IMAGE || 'fdroidserver-local' }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FDROID_DIR" ]; then
+            echo "::notice::No variable FDROID_DIR: the APK is not published to an F-Droid repository."
+            exit 0
+          fi
+          # Copied with its owner (docker cp -a): the F-Droid repository's user (1000:100), like the rest of its folder.
+          chown 1000:100 "$APK"
+          chmod 644 "$APK"
+
+          # Run by the host's Docker: create the container, copy the APK into repo/ under F-Droid's name
+          # (<application id>_<versionCode>.apk, one file per version), then run `fdroid update` (adds it, rebuilds
+          # and signs the index).
+          cid="$(docker create --user 1000:100 -e HOME=/tmp -v "$FDROID_DIR:/repo" \
+            "$FDROID_IMAGE" update --create-metadata)"
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+
+          docker cp -a "$APK" "$cid:/repo/repo/${APP_ID}_${VERSION_CODE}.apk"
+          docker start -a "$cid"

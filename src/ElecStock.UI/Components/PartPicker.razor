@@ -1,0 +1,72 @@
+@inject IStockApi Api
+@* Finds a stock part by typing part of its ref, designation, notes… *@
+<div class="picker">
+    <input type="search" class="input" placeholder="@Placeholder" value="@_text" autocomplete="off"
+           @oninput="OnInput" @onfocus="EnsureLoaded" @onkeydown="OnKey" @onblur="CloseSoon" />
+    @if (_open && _matches.Count > 0)
+    {
+        <ul class="picker-list">
+            @foreach (var part in _matches)
+            {
+                <li @onmousedown="() => Pick(part)" @onmousedown:preventDefault="true">
+                    <PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" Class="xs" />
+                    <span class="picker-ref">@part.Ref</span>
+                    <span class="picker-des">@part.Designation</span>
+                    <Badge Kind="@Format.StatusClass(part.Status)">@part.AvailableShort</Badge>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter] public EventCallback<PartSummary> OnPicked { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Search a part…";
+    /// <summary>Keep the picked ref in the box (else it is cleared for the next pick).</summary>
+    [Parameter] public bool KeepText { get; set; }
+
+    List<PartSummary>? _parts;
+    List<PartSummary> _matches = [];
+    string _text = "";
+    bool _open;
+
+    async Task EnsureLoaded()
+    {
+        _parts ??= (await Api.GetStockAsync()).Parts
+            .OrderBy(p => p, Comparer<PartSummary>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category)))
+            .ToList();
+    }
+
+    async Task OnInput(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? "";
+        await EnsureLoaded();
+        var terms = _text.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        _matches = terms.Length == 0 ? [] : _parts!
+            .Where(p => terms.All(t => p.SearchText.Contains(t)))
+            .OrderBy(p => p.Ref.StartsWith(terms[0], StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .Take(12)
+            .ToList();
+        _open = true;
+    }
+
+    async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && _matches.Count > 0) await Pick(_matches[0]);
+        else if (e.Key == "Escape") _open = false;
+    }
+
+    async Task Pick(PartSummary part)
+    {
+        _text = KeepText ? part.Ref : "";
+        _open = false;
+        _matches = [];
+        await OnPicked.InvokeAsync(part);
+    }
+
+    async Task CloseSoon()
+    {
+        await Task.Delay(150);
+        _open = false;
+    }
+}

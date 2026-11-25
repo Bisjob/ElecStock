@@ -1,0 +1,45 @@
+# ElecStock deployment (not the dev database: see postgres-compose/).
+#   Image: <REPO_URL>/elecstock-server:<ELECSTOCK_TAG>, by default the released image ghcr.io/bisjob/elecstock-server:latest.
+#   REPO_URL can point at another registry (<host:port>/<owner>, see docs/ci.md), or at an image built by
+#   `dotnet publish -t:PublishContainer` (see the README).
+#   Next to a .env (see env.example): docker compose pull && docker compose up -d
+# No project name here: the dev database (postgres-compose/) already uses "elecstock" on a dev PC.
+
+services:
+  elecstock-server:
+    image: ${REPO_URL:-ghcr.io/bisjob}/elecstock-server:${ELECSTOCK_TAG:-latest}
+    ports:
+      - "4002:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - TZ=${TZ:-Europe/Paris}
+      - ConnectionStrings__Stock=Host=postgres;Port=5432;Database=elecstock;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      # Address of the web UI from the phone: the QR labels of the locations point there
+      - Server__PublicBaseUrl=${PUBLIC_BASE_URL}
+    volumes:
+      # photos, thumbnails, datasheets and the trash folder
+      - elecstock_data:/app/AppData
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: elecstock
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d elecstock"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  elecstock_data:
+  postgres_data:

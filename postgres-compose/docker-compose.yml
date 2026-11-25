@@ -1,0 +1,42 @@
+# Dev database for the ElecStock server (not a deployment).
+#   docker compose up -d        (from this folder; optional .env, see env.example)
+# Connection string for the server running on the host:
+#   Host=localhost;Port=5433;Database=elecstock;Username=elecstock;Password=password
+# The user is superuser (official image), so EF migrations create the extensions and the
+# integration-test database (elecstock_test) themselves: no init script needed.
+
+# Explicit project name: the default one (= folder name, "postgres-compose") is generic and would clash with
+# another stack living in a folder of the same name (each would treat the other's containers as orphans).
+name: elecstock
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres_elecstock
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-elecstock}
+      POSTGRES_USER: ${POSTGRES_USER:-elecstock}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    ports:
+      - "127.0.0.1:5433:5432"   # not 5432, to leave it to another local PostgreSQL
+    volumes:
+      - elecstock_persistence:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elecstock} -d ${POSTGRES_DB:-elecstock}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer_elecstock
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1457:8080"   # server: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  elecstock_persistence:

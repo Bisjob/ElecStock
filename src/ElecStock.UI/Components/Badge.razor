@@ -1,0 +1,9 @@
+<span class="badge @Kind @Class" title="@Title">@ChildContent</span>
+
+@code {
+    /// <summary>ok, warn, bad, muted, order, accent.</summary>
+    [Parameter] public string Kind { get; set; } = "muted";
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

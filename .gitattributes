@@ -1,0 +1,2 @@
+# Shell scripts run in the Linux container: a CRLF checkout (core.autocrlf=true on Windows) breaks the shebang
+*.sh text eol=lf

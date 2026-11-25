@@ -1,0 +1,55 @@
+@page "/locations/labels"
+@inherits StockComponentBase
+
+<PageTitle>Labels · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header no-print">
+        <div>
+            <div class="breadcrumb"><a href="locations">Locations</a> <Icon Name="right" Size="14" /> <span>Labels</span></div>
+            <h1>QR labels</h1>
+        </div>
+        <div class="grow"></div>
+        <button class="btn primary" @onclick="async () => await Js.PrintAsync()"><Icon Name="printer" /> Print</button>
+    </div>
+    <p class="muted no-print">Each QR code opens <span class="mono">@_baseUrl</span>locations/&lt;code&gt;. The address is the server setting <span class="mono">Server:PublicBaseUrl</span> (else the address of this page).</p>
+
+    @if (_locations == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <div class="labels">
+            @foreach (var l in _locations)
+            {
+                <div class="label">
+                    <div class="qr">@QrCodes.Svg($"{_baseUrl}locations/{Uri.EscapeDataString(l.Code)}")</div>
+                    <div>
+                        <strong>@l.Code</strong>
+                        @if (l.Name.Length > 0 && l.Name != l.Code)
+                        {
+                            <span>@l.Name</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "codes")] public string? Codes { get; set; }
+
+    List<LocationDto>? _locations;
+    string _baseUrl = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var info = await Api.GetServerInfoAsync();
+        var baseUrl = info.PublicBaseUrl.Length > 0 ? info.PublicBaseUrl : Nav.ToAbsoluteUri(Api.ResolveUrl("/")).ToString();
+        _baseUrl = baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/";
+        var wanted = (Codes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _locations = (await Api.GetLocationsAsync()).Where(l => wanted.Count == 0 || wanted.Contains(l.Code)).ToList();
+    }
+}

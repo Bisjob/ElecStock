@@ -1,0 +1,218 @@
+@page "/orders/{Id:int}"
+@inherits StockComponentBase
+
+<PageTitle>@(_order?.Title ?? "Order") · ElecStock</PageTitle>
+
+<div class="page">
+    @if (_order == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        var locked = _order.Status == OrderStatus.Received;
+        <div class="breadcrumb"><a href="orders">Orders</a> <Icon Name="right" Size="14" /> <span>@_order.Title</span></div>
+        <div class="page-header">
+            <h1>@_order.Title</h1>
+            <Badge Kind="@Format.OrderClass(_order.Status)">@_order.Status</Badge>
+            <div class="grow"></div>
+            @if (_order.Status == OrderStatus.Draft)
+            {
+                <button class="btn" @onclick="() => SetStatus(OrderStatus.Ordered)"><Icon Name="truck" /> Mark as ordered</button>
+            }
+            @if (_order.Status is OrderStatus.Draft or OrderStatus.Ordered)
+            {
+                <button class="btn primary" disabled="@(_order.Lines.Count == 0)" @onclick="OpenReceive"><Icon Name="box" /> Receive</button>
+            }
+        </div>
+
+        <div class="card pad">
+            <div class="form-grid">
+                <label class="field"><span>Supplier</span><input class="input" @bind="_edit.Supplier" disabled="@locked" /></label>
+                <label class="field"><span>Order number</span><input class="input" @bind="_edit.OrderNumber" disabled="@locked" /></label>
+                <label class="field">
+                    <span>Status</span>
+                    <select class="input" @bind="_edit.Status" disabled="@locked">
+                        <option value="@OrderStatus.Draft">Draft</option>
+                        <option value="@OrderStatus.Ordered">Ordered</option>
+                        <option value="@OrderStatus.Cancelled">Cancelled</option>
+                        @if (locked) { <option value="@OrderStatus.Received">Received</option> }
+                    </select>
+                </label>
+                <label class="field"><span>Ordered on</span><input class="input" type="date" @bind="_edit.OrderedAt" disabled="@locked" /></label>
+                <label class="field"><span>Expected</span><input class="input" type="date" @bind="_edit.ExpectedAt" disabled="@locked" /></label>
+                <label class="field"><span>Currency</span><input class="input" @bind="_edit.Currency" disabled="@locked" /></label>
+                <label class="field"><span>Shipping</span><input class="input" type="number" step="0.01" @bind="_edit.Shipping" disabled="@locked" /></label>
+                <label class="field span-all"><span>Link</span><input class="input" @bind="_edit.Url" placeholder="https://…" disabled="@locked" /></label>
+                <label class="field span-all"><span>Notes</span><textarea class="input" rows="2" @bind="_edit.Notes" disabled="@locked"></textarea></label>
+            </div>
+            @if (!locked)
+            {
+                <div class="row gap" style="margin-top:12px">
+                    <button class="btn primary" @onclick="Save"><Icon Name="check" /> Save</button>
+                    @if (_order.Url.Length > 0) { <a class="btn" href="@_order.Url" target="_blank"><Icon Name="external" /> Open</a> }
+                    <div class="grow"></div>
+                    <button class="btn small danger" @onclick="Delete"><Icon Name="trash" Size="15" /> Delete</button>
+                </div>
+            }
+            else
+            {
+                <p class="muted small" style="margin:10px 0 0">Received on @Format.Date(_order.ReceivedAt): its quantities went into the stock; the order is kept as the history of what was bought.</p>
+            }
+        </div>
+
+        <div class="section">
+            <header>
+                <h2>Lines</h2>
+                <span class="muted">@Format.Money(_order.Total, _order.Currency)</span>
+                <div class="grow"></div>
+                @if (!locked)
+                {
+                    <PartPicker OnPicked="AddLine" Placeholder="Add a part to the order…" />
+                }
+            </header>
+            @if (_order.Lines.Count == 0)
+            {
+                <EmptyState Icon="cart" Title="No line" Text="Search a part above (add it to the stock first, with qty 0, if it is new)." />
+            }
+            else
+            {
+                <div class="card table-wrap">
+                    <table class="table">
+                        <thead><tr><th></th><th>Part</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line</th><th>Notes</th><th class="num">Stock now</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var line in _order.Lines)
+                            {
+                                <tr>
+                                    <td><PartThumb Ref="@line.Ref" Category="@line.Category" Designation="@line.Designation" ThumbUrl="@line.CoverThumbUrl" Class="xs" /></td>
+                                    <td><a href="@($"stock?part={line.PartId}")"><strong>@line.Ref</strong></a><div class="muted small">@line.Designation</div></td>
+                                    @if (locked)
+                                    {
+                                        <td class="num">@(line.ReceivedQty ?? line.Qty)</td>
+                                        <td class="num">@Format.Money(line.UnitPrice, _order.Currency)</td>
+                                    }
+                                    else
+                                    {
+                                        <td class="num" style="width:90px"><input class="input num" type="number" min="1" value="@line.Qty" @onchange="e => SaveLine(line, qty: e.Value)" /></td>
+                                        <td class="num" style="width:120px"><input class="input num" type="number" step="0.0001" value="@line.UnitPrice" @onchange="e => SaveLine(line, price: e.Value)" /></td>
+                                    }
+                                    <td class="num">@Format.Money(line.UnitPrice * (line.ReceivedQty ?? line.Qty), _order.Currency)</td>
+                                    <td class="small">
+                                        @if (locked) { @line.Notes }
+                                        else { <input class="input" value="@line.Notes" @onchange="e => SaveLine(line, notes: e.Value)" /> }
+                                    </td>
+                                    <td class="num muted">@(line.PartQty.Length > 0 ? line.PartQty : "?")</td>
+                                    <td>
+                                        @if (!locked)
+                                        {
+                                            <button class="icon-btn" title="Remove the line" @onclick="() => RemoveLine(line)"><Icon Name="trash" Size="15" /></button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<Modal @bind-Show="_showReceive" Title="Receive the order">
+    <ChildContent>
+        <p>Quantities actually received; they are added to the stock (<span class="mono">10+</span> becomes <span class="mono">20+</span>, an empty quantity becomes the received one).</p>
+        <table class="table">
+            <thead><tr><th>Part</th><th class="num">Ordered</th><th class="num">Received</th></tr></thead>
+            <tbody>
+                @foreach (var r in _receive)
+                {
+                    <tr>
+                        <td><strong>@r.Ref</strong></td>
+                        <td class="num">@r.Ordered</td>
+                        <td class="num" style="width:110px"><input class="input num" type="number" min="0" @bind="r.Line.Qty" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showReceive = false">Cancel</button>
+        <button class="btn primary" disabled="@Busy" @onclick="Receive"><Icon Name="box" /> Add to the stock</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    sealed record ReceiveRow(string Ref, int Ordered, ReceiveLine Line);
+
+    OrderDetail? _order;
+    OrderEdit _edit = new();
+    bool _showReceive;
+    List<ReceiveRow> _receive = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await ReloadAsync();
+        if (_order == null) Toasts.Error("This order no longer exists.");
+    }
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All || (change.Scope == ChangeScope.Order && change.Id == Id);
+
+    protected override async Task ReloadAsync()
+    {
+        _order = await Api.GetOrderAsync(Id);
+        if (_order != null) ResetEdit();
+    }
+
+    void ResetEdit() => _edit = new OrderEdit
+    {
+        Id = _order!.Id, Supplier = _order.Supplier, OrderNumber = _order.OrderNumber, Url = _order.Url, Status = _order.Status,
+        OrderedAt = _order.OrderedAt, ExpectedAt = _order.ExpectedAt, Notes = _order.Notes, Currency = _order.Currency, Shipping = _order.Shipping,
+    };
+
+    async Task Save() => await Try(async () =>
+    {
+        _order = await Api.SaveOrderAsync(_edit);
+        ResetEdit();
+    }, "Saved");
+
+    async Task SetStatus(OrderStatus status)
+    {
+        _edit.Status = status;
+        await Save();
+    }
+
+    async Task Delete()
+    {
+        if (_order == null || !await Js.ConfirmAsync($"Delete this {_order.Status.ToString().ToLowerInvariant()} order and its {_order.Lines.Count} line(s)?")) return;
+        if (await Try(() => Api.DeleteOrderAsync(Id), "Order deleted")) Nav.NavigateTo("orders");
+    }
+
+    async Task AddLine(PartSummary part) => await Try(async () =>
+        _order = await Api.AddToOrderAsync(new AddToOrder { OrderId = Id, PartId = part.Id, Qty = 1 }));
+
+    async Task SaveLine(OrderLineDto line, object? qty = null, object? price = null, object? notes = null)
+    {
+        var edit = new OrderLineEdit { Id = line.Id, OrderId = Id, PartId = line.PartId, Qty = line.Qty, UnitPrice = line.UnitPrice, Notes = line.Notes };
+        if (qty != null && int.TryParse(qty.ToString(), out var q)) edit.Qty = q;
+        if (price != null) edit.UnitPrice = decimal.TryParse(price.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var p) ? p : null;
+        if (notes != null) edit.Notes = notes.ToString() ?? "";
+        await Try(async () => _order = await Api.SaveOrderLineAsync(edit));
+    }
+
+    async Task RemoveLine(OrderLineDto line) => await Try(async () => _order = await Api.DeleteOrderLineAsync(line.Id));
+
+    void OpenReceive()
+    {
+        _receive = _order!.Lines.Select(l => new ReceiveRow(l.Ref, l.Qty, new ReceiveLine { LineId = l.Id, Qty = l.Qty })).ToList();
+        _showReceive = true;
+    }
+
+    async Task Receive() => await Try(async () =>
+    {
+        _order = await Api.ReceiveOrderAsync(new ReceiveOrder { OrderId = Id, Lines = _receive.Select(r => r.Line).ToList() });
+        ResetEdit();
+        _showReceive = false;
+    }, "Received: the stock is updated");
+}

@@ -1,0 +1,134 @@
+@page "/projects"
+@inherits StockComponentBase
+
+<PageTitle>Projects · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>Projects</h1>
+        <div class="chips">
+            <button class="chip @(_show == "active" ? "on" : "")" @onclick='() => _show = "active"'>Active</button>
+            <button class="chip @(_show == "all" ? "on" : "")" @onclick='() => _show = "all"'>All</button>
+            <button class="chip @(_show == "archived" ? "on" : "")" @onclick='() => _show = "archived"'>Archived</button>
+        </div>
+        <div class="grow"></div>
+        <button class="btn primary" @onclick="() => { _new = new(); _showNew = true; }"><Icon Name="plus" /> Project</button>
+    </div>
+
+    @if (_projects == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (!Visible.Any())
+    {
+        <EmptyState Icon="folder" Title="No project here" Text="A project groups boards (devices) and their revisions; each revision reserves stock parts." />
+    }
+    else
+    {
+        <div class="project-grid">
+            @foreach (var project in Visible)
+            {
+                <a class="card project-card" href="@($"projects/{project.Id}")">
+                    <div class="head">
+                        <div class="thumb">
+                            @if ((project.IconUrl ?? project.CoverThumbUrl) is { } icon)
+                            {
+                                <img src="@Url(icon)" alt="" loading="lazy" />
+                            }
+                            else
+                            {
+                                <Icon Name="folder" Size="26" />
+                            }
+                        </div>
+                        <div class="grow">
+                            <h2 title="@project.Name">@project.Name</h2>
+                            <Badge Kind="@Format.ProjectClass(project.Status)">@project.Status</Badge>
+                        </div>
+                    </div>
+                    @if (project.Description.Length > 0)
+                    {
+                        <div class="desc">@project.Description</div>
+                    }
+                    @* one block per revision: name and status on the first line, the line counts below *@
+                    <div class="rev-list">
+                        @foreach (var device in project.Devices)
+                        {
+                            @foreach (var rev in device.Revisions)
+                            {
+                                <div class="rev-line" title="@($"{device.Name} rev {rev.Rev}")">
+                                    <span class="dot @Format.StateClass(rev)"></span>
+                                    <span class="rev-name"><strong>@device.Name</strong> <span class="muted">rev @rev.Rev</span></span>
+                                    <span class="rev-status">@Format.Title(rev.Status)</span>
+                                    <span class="rev-summary muted small">@Format.Summary(rev)</span>
+                                </div>
+                            }
+                            @if (device.Revisions.Count == 0)
+                            {
+                                <div class="rev-line" title="@device.Name">
+                                    <span class="dot"></span>
+                                    <span class="rev-name"><strong>@device.Name</strong></span>
+                                    <span class="rev-status">no revision</span>
+                                </div>
+                            }
+                        }
+                        @if (project.Devices.Count == 0)
+                        {
+                            <span class="muted small">No board yet.</span>
+                        }
+                    </div>
+                </a>
+            }
+        </div>
+    }
+</div>
+
+<Modal @bind-Show="_showNew" Title="New project">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field span-all"><span>Name</span><input class="input" @bind="_new.Name" @bind:event="oninput" /></label>
+            <label class="field span-all"><span>Description</span><input class="input" @bind="_new.Description" /></label>
+            <label class="field">
+                <span>Status</span>
+                <select class="input" @bind="_new.Status">
+                    @foreach (var s in Enum.GetValues<ProjectStatus>()) { <option value="@s">@s</option> }
+                </select>
+            </label>
+            <label class="field"><span>Folder</span><input class="input" @bind="_new.RepoPath" placeholder="optional" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showNew = false">Cancel</button>
+        <button class="btn primary" disabled="@(_new.Name.Trim().Length == 0)" @onclick="Create">Create</button>
+    </Footer>
+</Modal>
+
+@code {
+    List<ProjectSummary>? _projects;
+    string _show = "active";
+    bool _showNew;
+    ProjectEdit _new = new();
+
+    IEnumerable<ProjectSummary> Visible => (_projects ?? []).Where(p => _show switch
+    {
+        "active" => p.Status is not ProjectStatus.Archived,
+        "archived" => p.Status == ProjectStatus.Archived,
+        _ => true,
+    });
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    protected override async Task ReloadAsync() => _projects = await Api.GetProjectsAsync();
+
+    async Task Create()
+    {
+        await Try(async () =>
+        {
+            var created = await Api.SaveProjectAsync(_new);
+            _showNew = false;
+            Nav.NavigateTo($"projects/{created.Id}");
+        });
+    }
+}

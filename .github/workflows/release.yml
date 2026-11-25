@@ -1,0 +1,228 @@
+name: Release
+
+# GitHub side of the CI. Development builds (master, pull requests) and the self-hosted publishing run on Forgejo
+# (.forgejo/workflows/ci.yml); this repository is its mirror, and a version tag "vX.Y.Z" pushed by the mirror starts
+# this workflow:
+# - builds the server and runs the tests (the service tests on a PostgreSQL service);
+# - pushes the server image to the GitHub Container Registry, ghcr.io/<owner>/elecstock-server, for linux-x64 and
+#   linux-arm64 (tags "X.Y.Z", "X.Y" and "latest"; a pre-release such as v1.1.0-rc.1 gets its own tag only);
+# - builds the Android APK, signed with the secrets ANDROID_KEYSTORE and ANDROID_KEYSTORE_PASSWORD (the same key as
+#   the F-Droid builds, so one replaces the other);
+# - creates the GitHub release of the tag, with the APK attached.
+# A manual run (Run workflow) builds and tests everything and publishes nothing (the APK is a run artifact). See docs/ci.md.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: elecstock
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U elecstock"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Set explicitly, so the service tests fail instead of skipping themselves when the database does not answer.
+      ELECSTOCK_TEST_DB: Host=localhost;Port=5432;Database=elecstock_test;Username=elecstock;Password=password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            base=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n 1)
+            version="${base}-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the server
+        run: dotnet build src/ElecStock.Server -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test --project tests/ElecStock.Tests -c Release
+
+  docker:
+    name: docker image
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The .NET SDK builds one image per runtime and an image index over them, then pushes it to ghcr.io itself (no
+      # Dockerfile, no Docker). A manual run writes it to an archive, pushed nowhere. PublishRepositoryUrl labels the
+      # image with this repository (org.opencontainers.image.source), which links the package to it.
+      - name: Build and push the image
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+          PUSH: ${{ github.event_name == 'push' }}
+          OWNER: ${{ github.repository_owner }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_UNAME: ${{ github.actor }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_PWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rids="linux-x64;linux-arm64"
+          # The quotes keep the ";" of the lists inside the properties.
+          args=(src/ElecStock.Server -c Release -t:PublishContainer
+            "-p:RuntimeIdentifiers=\"$rids\"" "-p:ContainerRuntimeIdentifiers=\"$rids\""
+            "-p:Version=$VERSION" "-p:ContainerRepository=${OWNER,,}/elecstock-server" -p:PublishRepositoryUrl=true)
+          if [[ "$PUSH" == "true" ]]; then
+            tags="$VERSION"
+            if [[ "$VERSION" != *-* ]]; then
+              tags="$tags;${VERSION%.*};latest"
+            fi
+            args+=(-p:ContainerRegistry=ghcr.io "-p:ContainerImageTags=\"$tags\"")
+          else
+            args+=("-p:ContainerArchiveOutputPath=$RUNNER_TEMP/elecstock-server.tar.gz")
+          fi
+          dotnet publish "${args[@]}"
+
+  android:
+    needs: build-test
+    runs-on: ubuntu-latest
+    env:
+      APK: src/ElecStock.Appli/bin/Release/net10.0-android/publish/com.bisjob.elecstock-Signed.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Android version
+        id: version
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+        run: |
+          # versionCode: X*10000 + Y*100 + Z, the same as the Forgejo builds (an update needs a higher code).
+          IFS=. read -r major minor patch <<< "${VERSION%%-*}"
+          if (( minor > 99 || patch > 99 )); then
+            echo "::error::Version $VERSION: minor and patch must stay below 100 for the versionCode."
+            exit 1
+          fi
+          echo "code=$(( major * 10000 + minor * 100 + patch ))" >> "$GITHUB_OUTPUT"
+
+      - name: Signing key
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE: ${{ github.event_name == 'push' }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE" || -z "$ANDROID_KEYSTORE_PASSWORD" ]]; then
+            if [[ "$RELEASE" == "true" ]]; then
+              echo "::error::Add the secrets ANDROID_KEYSTORE (the keystore, base64) and ANDROID_KEYSTORE_PASSWORD to release the app."
+              exit 1
+            fi
+            echo "::warning::No ANDROID_KEYSTORE: this APK is signed with a throwaway debug key and cannot update the released app."
+            echo "keystore=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keystore="$RUNNER_TEMP/elecstock.keystore"
+          base64 -d <<< "$ANDROID_KEYSTORE" > "$keystore"
+          echo "keystore=$keystore" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install the MAUI workload and the Android SDK
+        shell: bash
+        run: |
+          dotnet workload install maui-android
+          sdk="$RUNNER_TEMP/android-sdk"
+          dotnet build src/ElecStock.Appli -t:InstallAndroidDependencies -f net10.0-android \
+            "-p:AndroidSdkDirectory=$sdk" "-p:JavaSdkDirectory=$JAVA_HOME" -p:AcceptAndroidSDKLicenses=True
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+      - name: Build the APK
+        shell: bash
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || 'elecstock' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          args=(src/ElecStock.Appli -f net10.0-android -c Release "-p:AndroidSdkDirectory=$ANDROID_HOME"
+            "-p:Version=$VERSION" "-p:ApplicationDisplayVersion=$VERSION" "-p:ApplicationVersion=$VERSION_CODE")
+          if [[ -n "$KEYSTORE" ]]; then
+            # A PKCS12 keystore has one password for the store and the key; "env:" keeps it off the command line.
+            args+=(-p:AndroidKeyStore=true "-p:AndroidSigningKeyStore=$KEYSTORE" "-p:AndroidSigningKeyAlias=$KEY_ALIAS"
+              -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyPass=env:ANDROID_KEYSTORE_PASSWORD)
+          fi
+          dotnet publish "${args[@]}"
+          mkdir -p out
+          cp "$APK" "out/ElecStock-$VERSION.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: out/*.apk
+
+  release:
+    needs: [build-test, docker, android]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: out
+
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build-test.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          image="ghcr.io/${OWNER,,}/elecstock-server:$VERSION"
+          printf '%s\n' \
+            "**Server image** (linux-x64, linux-arm64):" "" '```' "docker pull $image" '```' "" \
+            "**Android app**: the APK below." > notes.md
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" out/*.apk --verify-tag --title "ElecStock $VERSION" \
+            --notes-file notes.md --generate-notes "${flags[@]}"

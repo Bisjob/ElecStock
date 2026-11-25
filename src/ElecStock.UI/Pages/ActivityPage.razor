@@ -1,0 +1,95 @@
+@page "/activity"
+@inherits StockComponentBase
+
+<PageTitle>History · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>History</h1>
+        <div class="chips">
+            <button class="chip @(_source == null ? "on" : "")" @onclick="() => SetSource(null)">Everyone</button>
+            @foreach (var s in new[] { ActivitySource.Web, ActivitySource.App, ActivitySource.Mcp, ActivitySource.Import })
+            {
+                <button class="chip @(_source == s ? "on" : "")" @onclick="() => SetSource(s)">
+                    @if (s == ActivitySource.Mcp) { <Icon Name="bot" Size="14" /> }
+                    @Format.SourceText(s)
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (_items == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (_items.Count == 0)
+    {
+        <EmptyState Icon="history" Title="Nothing yet" Text="Every change of the stock is listed here, with who made it (web, app, Claude)." />
+    }
+    else
+    {
+        @foreach (var day in _items.GroupBy(a => Format.Day(a.At)))
+        {
+            <div class="feed-day">@day.Key</div>
+            @foreach (var a in day)
+            {
+                <div class="feed-item">
+                    <span class="time">@Format.Time(a.At)</span>
+                    <Badge Kind="@(a.Source == ActivitySource.Mcp ? "order" : "outline")" Class="src">@Format.SourceText(a.Source)</Badge>
+                    <span class="grow">
+                        @if (a.PartId != null)
+                        {
+                            <a href="@($"stock?part={a.PartId}")">@a.Summary</a>
+                        }
+                        else if (a.RevisionId != null)
+                        {
+                            <a href="@($"revisions/{a.RevisionId}")">@a.Summary</a>
+                        }
+                        else if (a.OrderId != null)
+                        {
+                            <a href="@($"orders/{a.OrderId}")">@a.Summary</a>
+                        }
+                        else if (a.ProjectId != null)
+                        {
+                            <a href="@($"projects/{a.ProjectId}")">@a.Summary</a>
+                        }
+                        else
+                        {
+                            @a.Summary
+                        }
+                    </span>
+                    @if (a.QtyBefore != null || a.QtyAfter != null)
+                    {
+                        <span class="qty">@(a.QtyBefore is { Length: > 0 } b ? b : "?") → @(a.QtyAfter is { Length: > 0 } q ? q : "?")</span>
+                    }
+                </div>
+            }
+        }
+        @if (_items.Count >= _take)
+        {
+            <button class="btn" style="margin-top:14px" @onclick="More">Show more</button>
+        }
+    }
+</div>
+
+@code {
+    List<ActivityDto>? _items;
+    ActivitySource? _source;
+    int _take = 200;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    protected override async Task ReloadAsync() => _items = await Api.GetActivityAsync(new ActivityQuery { Source = _source, Take = _take });
+
+    async Task SetSource(ActivitySource? source)
+    {
+        _source = source;
+        await ReloadAsync();
+    }
+
+    async Task More()
+    {
+        _take += 300;
+        await ReloadAsync();
+    }
+}

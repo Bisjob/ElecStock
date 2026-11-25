@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+	<PropertyGroup>
+		<Description>Blazor UI shared by the web server and the MAUI app</Description>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<SupportedPlatform Include="browser" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Markdig" />
+		<PackageReference Include="Microsoft.AspNetCore.Components.Web" />
+		<PackageReference Include="QRCoder" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\ElecStock.Core\ElecStock.Core.csproj" />
+	</ItemGroup>
+
+</Project>

@@ -1,0 +1,54 @@
+@* Markdown shown rendered, with an Edit button that swaps to a textarea (Save / Cancel). *@
+<div class="md-block">
+    @if (_editing)
+    {
+        <textarea class="md-editor" rows="@Rows" @bind="_draft" @bind:event="oninput" placeholder="Markdown"></textarea>
+        <div class="row gap">
+            <button class="btn primary" disabled="@_saving" @onclick="Save"><Icon Name="check" /> Save</button>
+            <button class="btn" @onclick="() => _editing = false">Cancel</button>
+            <span class="muted small">Markdown: # title, **bold**, | tables |, - lists</span>
+        </div>
+    }
+    else
+    {
+        <div class="md-toolbar">
+            @Toolbar
+            <button class="btn small" @onclick="StartEdit"><Icon Name="edit" Size="15" /> @(string.IsNullOrWhiteSpace(Text) ? EmptyAction : "Edit")</button>
+        </div>
+        @if (string.IsNullOrWhiteSpace(Text))
+        {
+            <p class="muted">@EmptyText</p>
+        }
+        else
+        {
+            <MarkdownView Text="@Text" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string? Text { get; set; }
+    [Parameter, EditorRequired] public Func<string, Task<bool>> OnSave { get; set; } = null!;
+    [Parameter] public string EmptyText { get; set; } = "Nothing written yet.";
+    [Parameter] public string EmptyAction { get; set; } = "Write";
+    /// <summary>Text put in the editor when starting from nothing (a sheet template).</summary>
+    [Parameter] public string? Template { get; set; }
+    [Parameter] public int Rows { get; set; } = 18;
+    [Parameter] public RenderFragment? Toolbar { get; set; }
+
+    bool _editing, _saving;
+    string _draft = "";
+
+    void StartEdit()
+    {
+        _draft = string.IsNullOrWhiteSpace(Text) ? Template ?? "" : Text!;
+        _editing = true;
+    }
+
+    async Task Save()
+    {
+        _saving = true;
+        if (await OnSave(_draft)) _editing = false;
+        _saving = false;
+    }
+}

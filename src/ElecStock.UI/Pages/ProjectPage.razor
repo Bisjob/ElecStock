@@ -1,0 +1,281 @@
+@page "/projects/{Id:int}"
+@inherits StockComponentBase
+
+<PageTitle>@(_project?.Name ?? "Project") · ElecStock</PageTitle>
+
+<div class="page">
+    @if (_project == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <div class="breadcrumb"><a href="projects">Projects</a> <Icon Name="right" Size="14" /> <span>@_project.Name</span></div>
+        <div class="page-header">
+            <label class="project-icon" title="Change the icon (image or SVG)">
+                <span class="thumb">
+                    @if (IconSrc is { } src)
+                    {
+                        <img src="@Url(src)" alt="" />
+                    }
+                    else
+                    {
+                        <Icon Name="folder" Size="24" />
+                    }
+                </span>
+                <InputFile OnChange="ChangeIcon" accept="image/*,.svg" />
+            </label>
+            <h1>@_project.Name</h1>
+            <select class="input" style="width:auto" value="@_project.Status" @onchange="ChangeStatus">
+                @foreach (var s in Enum.GetValues<ProjectStatus>()) { <option value="@s">@s</option> }
+            </select>
+            <div class="grow"></div>
+            <button class="btn" @onclick="EditProject"><Icon Name="edit" /> Edit</button>
+            <button class="btn primary" @onclick="() => { _device = new DeviceEdit { ProjectId = Id }; _showDevice = true; }"><Icon Name="plus" /> Device</button>
+        </div>
+
+        @if (_project.Description.Length > 0)
+        {
+            <p style="margin-top:-6px">@_project.Description</p>
+        }
+        <dl class="kv">
+            @if (_project.RepoPath.Length > 0)
+            {
+                <dt>Folder</dt>
+                <dd><span class="mono">@_project.RepoPath</span> <button class="icon-btn" title="Copy" @onclick="async () => await Js.CopyAsync(_project.RepoPath)"><Icon Name="copy" Size="14" /></button></dd>
+            }
+            @if (_project.Url.Length > 0)
+            {
+                <dt>Link</dt>
+                <dd><a href="@_project.Url" target="_blank">@_project.Url</a></dd>
+            }
+            <dt>Updated</dt>
+            <dd>@Format.DateTime(_project.UpdatedAt)</dd>
+        </dl>
+
+        <div class="section">
+            <header><h2>Boards</h2><span class="muted small">one device = one physical board; each revision reserves its parts</span></header>
+            @if (_project.Devices.Count == 0)
+            {
+                <EmptyState Icon="layers" Title="No board yet" Text="Add a device: it starts with revision A, ready to reserve parts." />
+            }
+            @foreach (var device in _project.Devices)
+            {
+                <div class="card device-card">
+                    <div class="row gap">
+                        <h3 class="grow">@device.Name</h3>
+                        <button class="btn small" @onclick="() => AddRevision(device)"><Icon Name="plus" Size="15" /> Revision</button>
+                        <button class="icon-btn" title="Edit the device" @onclick="() => EditDevice(device)"><Icon Name="edit" Size="15" /></button>
+                        <button class="icon-btn" title="Delete the device" @onclick="() => DeleteDevice(device)"><Icon Name="trash" Size="15" /></button>
+                    </div>
+                    @if (device.Description.Length > 0 || device.Path.Length > 0)
+                    {
+                        <div class="muted small" style="margin:2px 0 6px">
+                            @device.Description
+                            @if (device.Path.Length > 0)
+                            {
+                                <span class="mono"> @device.Path</span>
+                            }
+                        </div>
+                    }
+                    @foreach (var rev in device.Revisions)
+                    {
+                        <a class="rev-row" href="@($"revisions/{rev.Id}")">
+                            <span class="state-dot @Format.StateClass(rev)"></span>
+                            <strong>rev @rev.Rev</strong>
+                            <Badge Kind="@Format.RevisionClass(rev.Status)">@Format.Title(rev.Status)</Badge>
+                            <span class="muted small grow">@Format.Summary(rev)</span>
+                            <Icon Name="right" Size="16" Class="muted" />
+                        </a>
+                    }
+                    @if (device.Notes.Length > 0)
+                    {
+                        <MarkdownView Text="@device.Notes" Class="small" />
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="section">
+            <header><h2>Notes</h2></header>
+            <div class="card pad">
+                <MarkdownBlock Text="@_project.Notes" OnSave="SaveNotes" EmptyText="No notes yet: goals, decisions, links." Rows="12" />
+            </div>
+        </div>
+
+        <div class="section">
+            <header><h2>Photos</h2></header>
+            <div class="card pad">
+                <PhotoGallery Owner="PhotoOwner.Project" OwnerId="Id" Photos="_project.Photos" OnChanged="ReloadAsync" />
+            </div>
+        </div>
+
+        <div class="section">
+            <button class="btn small danger" @onclick="DeleteProject"><Icon Name="trash" Size="15" /> Delete the project</button>
+        </div>
+    }
+</div>
+
+<Modal @bind-Show="_showEdit" Title="Edit the project">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field span-all"><span>Name</span><input class="input" @bind="_edit.Name" /></label>
+            <label class="field span-all"><span>Description</span><input class="input" @bind="_edit.Description" /></label>
+            <label class="field">
+                <span>Status</span>
+                <select class="input" @bind="_edit.Status">
+                    @foreach (var s in Enum.GetValues<ProjectStatus>()) { <option value="@s">@s</option> }
+                </select>
+            </label>
+            <label class="field"><span>Folder</span><input class="input" @bind="_edit.RepoPath" /></label>
+            <label class="field span-all"><span>Link</span><input class="input" @bind="_edit.Url" placeholder="https://…" /></label>
+            <div class="field span-all">
+                <span>Icon</span>
+                <div class="row gap">
+                    <label class="btn small" style="position:relative">
+                        <Icon Name="upload" Size="15" /> Image or SVG
+                        <InputFile OnChange="ChangeIcon" accept="image/*,.svg" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+                    </label>
+                    @if (_project?.IconUrl != null)
+                    {
+                        <button class="btn small" @onclick="RemoveIcon"><Icon Name="x" Size="15" /> Remove the icon</button>
+                    }
+                    <span class="muted small">without one, the cover photo of the project is shown</span>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showEdit = false">Cancel</button>
+        <button class="btn primary" @onclick="SaveProject">Save</button>
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showDevice" Title="@(_device.Id == null ? "New device" : "Edit the device")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field span-all"><span>Name</span><input class="input" @bind="_device.Name" @bind:event="oninput" placeholder="LedStrip2-Env-Meter" /></label>
+            <label class="field span-all"><span>Description</span><input class="input" @bind="_device.Description" /></label>
+            <label class="field span-all"><span>Folder inside the project</span><input class="input" @bind="_device.Path" placeholder="Elec/Devices/…" /></label>
+            <label class="field span-all"><span>Notes (Markdown)</span><textarea class="input" rows="4" @bind="_device.Notes"></textarea></label>
+        </div>
+        @if (_device.Id == null)
+        {
+            <p class="muted small">The device starts with revision A.</p>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showDevice = false">Cancel</button>
+        <button class="btn primary" disabled="@(_device.Name.Trim().Length == 0)" @onclick="SaveDevice">Save</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    ProjectDetail? _project;
+    bool _showEdit, _showDevice;
+    ProjectEdit _edit = new();
+    DeviceEdit _device = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await ReloadAsync();
+        if (_project == null) Toasts.Error("This project no longer exists.");
+    }
+
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Part || (change.Scope == ChangeScope.Project && change.Id == Id);
+
+    protected override async Task ReloadAsync() => _project = await Api.GetProjectAsync(Id);
+
+    ProjectEdit ToEdit() => new()
+    {
+        Id = _project!.Id, Name = _project.Name, Description = _project.Description, Status = _project.Status,
+        RepoPath = _project.RepoPath, Url = _project.Url, Notes = _project.Notes,
+    };
+
+    void EditProject()
+    {
+        _edit = ToEdit();
+        _showEdit = true;
+    }
+
+    async Task SaveProject() => await Try(async () =>
+    {
+        _project = await Api.SaveProjectAsync(_edit);
+        _showEdit = false;
+    }, "Saved");
+
+    const long MaxIconBytes = 2 * 1024 * 1024;
+
+    // same order as the project cards: the icon, else the cover photo
+    string? IconSrc => _project?.IconUrl ?? _project?.Photos.FirstOrDefault(p => p.IsCover)?.ThumbUrl;
+
+    async Task ChangeIcon(InputFileChangeEventArgs e)
+    {
+        if (e.File.Size > MaxIconBytes)
+        {
+            Toasts.Error("The icon is larger than 2 MB.");
+            return;
+        }
+        await Try(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(MaxIconBytes);
+            _project = await Api.SetProjectIconAsync(Id, e.File.Name, stream);
+        }, "Icon changed");
+    }
+
+    async Task RemoveIcon() => await Try(async () => _project = await Api.RemoveProjectIconAsync(Id), "Icon removed");
+
+    async Task ChangeStatus(ChangeEventArgs e)
+    {
+        if (!Enum.TryParse<ProjectStatus>(e.Value?.ToString(), out var status)) return;
+        var edit = ToEdit();
+        edit.Status = status;
+        await Try(async () => _project = await Api.SaveProjectAsync(edit));
+    }
+
+    async Task<bool> SaveNotes(string markdown)
+    {
+        var edit = ToEdit();
+        edit.Notes = markdown;
+        return await Try(async () => _project = await Api.SaveProjectAsync(edit), "Notes saved");
+    }
+
+    void EditDevice(DeviceDetail d)
+    {
+        _device = new DeviceEdit { Id = d.Id, ProjectId = Id, Name = d.Name, Description = d.Description, Path = d.Path, Notes = d.Notes };
+        _showDevice = true;
+    }
+
+    async Task SaveDevice() => await Try(async () =>
+    {
+        _project = await Api.SaveDeviceAsync(_device);
+        _showDevice = false;
+    });
+
+    async Task DeleteDevice(DeviceDetail d)
+    {
+        var lines = d.Revisions.Sum(r => r.ReservedLines);
+        if (!await Js.ConfirmAsync($"Delete {d.Name} and its {d.Revisions.Count} revision(s)?" + (lines > 0 ? $" {lines} reserved line(s) will be released." : ""))) return;
+        await Try(async () => _project = await Api.DeleteDeviceAsync(d.Id), $"{d.Name} deleted");
+    }
+
+    async Task AddRevision(DeviceDetail d)
+    {
+        var last = d.Revisions.Select(r => r.Rev).LastOrDefault();
+        var next = last is { Length: 1 } && char.IsLetter(last[0]) ? ((char)(last[0] + 1)).ToString() : "B";
+        await Try(async () =>
+        {
+            var rev = await Api.SaveRevisionAsync(new RevisionEdit { DeviceId = d.Id, Rev = d.Revisions.Count == 0 ? "A" : next });
+            Nav.NavigateTo($"revisions/{rev.Id}");
+        });
+    }
+
+    async Task DeleteProject()
+    {
+        if (_project == null || !await Js.ConfirmAsync($"Delete the project {_project.Name}, its boards, revisions and photos? Reserved parts are released; quantities already used stay deducted.")) return;
+        if (await Try(() => Api.DeleteProjectAsync(Id), $"{_project.Name} deleted")) Nav.NavigateTo("projects");
+    }
+}

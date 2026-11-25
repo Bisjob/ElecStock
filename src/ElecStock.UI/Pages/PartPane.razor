@@ -1,0 +1,520 @@
+@inherits StockComponentBase
+@* Side pane of the stock page: one part (or a new one), with its tabs. *@
+
+@if (_detail == null && NewPart == null)
+{
+    <div class="pane-head"><p class="muted">Loading…</p></div>
+}
+else
+{
+    var p = _detail?.Part;
+    <div class="pane-head">
+        <PartThumb Ref="@(p?.Ref ?? _edit.Ref)" Category="@(p?.Category ?? _edit.Category)" Designation="@(p?.Designation ?? _edit.Designation)"
+                   ThumbUrl="@p?.CoverThumbUrl" Class="lg" />
+        <div class="grow">
+            <h2>@(p?.Ref ?? "New part")</h2>
+            <div class="des">@(p?.Designation ?? "Fill in the details and save.")</div>
+            @if (p != null)
+            {
+                <div class="muted small" style="margin-top:4px">
+                    @PartVisuals.CategoryTitle(p.Category)
+                    @if (p.LocationDisplay.Length > 0)
+                    {
+                        <span> · <a href="@($"locations/{Uri.EscapeDataString(p.LocationCode)}")"><Icon Name="pin" Size="12" /> @p.LocationDisplay</a></span>
+                    }
+                </div>
+            }
+        </div>
+        <button class="icon-btn" title="Close" @onclick="OnClose"><Icon Name="x" /></button>
+    </div>
+
+    @if (p != null)
+    {
+        <div class="pane-avail">
+            <Badge Kind="@Format.StatusClass(p.Status)">@p.StatusTitle</Badge>
+            <span>@p.AvailableLong</span>
+            @if (p.OnOrder > 0)
+            {
+                <Badge Kind="order"><Icon Name="truck" Size="12" /> @p.OnOrder on order</Badge>
+            }
+            @if (p.Planned > 0)
+            {
+                <Badge Kind="warn"><Icon Name="cart" Size="12" /> @p.Planned planned</Badge>
+            }
+        </div>
+        <div class="pane-actions">
+            <button class="btn small" @onclick="AddSimilar" title="New part pre-filled from this one (kits, series)"><Icon Name="copy" Size="15" /> Add similar</button>
+            <button class="btn small" @onclick="() => _showOrder = true"><Icon Name="cart" Size="15" /> Add to order</button>
+            @if (p.HasLocalDatasheet || p.DatasheetUrl.Length > 0)
+            {
+                <button class="btn small" @onclick="() => _tab = Tab.Datasheet"><Icon Name="file" Size="15" /> Datasheet</button>
+            }
+        </div>
+
+        <div class="tabs">
+            @TabButton(Tab.Details, "Details", null)
+            @TabButton(Tab.Photos, "Photos", p.PhotoCount)
+            @TabButton(Tab.Sheet, "Sheet", null)
+            @TabButton(Tab.Datasheet, "Datasheet", null)
+            @TabButton(Tab.Notes, "Notes", null)
+            @TabButton(Tab.History, "History", null)
+        </div>
+    }
+
+    <div class="tab-body">
+        @switch (_tab)
+        {
+            case Tab.Details:
+                <div class="form-grid">
+                    <label class="field"><span>Ref</span><input class="input" @bind="_edit.Ref" @bind:event="oninput" placeholder="R-4k7, IRF4905…" /></label>
+                    <label class="field">
+                        <span>Category</span>
+                        <input class="input" list="categories" @bind="_edit.Category" @bind:event="oninput" />
+                        <datalist id="categories">
+                            @foreach (var c in Categories) { <option value="@c">@PartVisuals.CategoryTitle(c)</option> }
+                        </datalist>
+                    </label>
+                    <label class="field span-all"><span>Designation</span><input class="input" @bind="_edit.Designation" @bind:event="oninput" /></label>
+                    <label class="field">
+                        <span>Quantity (12 · 10+ · empty = not counted)</span>
+                        <div class="qty-input">
+                            <button class="btn" disabled="@(!CanStep(-1))" @onclick="() => Step(-1)"><Icon Name="minus" /></button>
+                            <input class="input" @bind="_edit.Qty" @bind:event="oninput" />
+                            <button class="btn" disabled="@(!CanStep(1))" @onclick="() => Step(1)"><Icon Name="plus" /></button>
+                        </div>
+                    </label>
+                    <label class="field">
+                        <span>Location</span>
+                        <select class="input" value="@(_edit.LocationId?.ToString() ?? "")" @onchange="OnLocation">
+                            <option value="">— none —</option>
+                            @foreach (var l in Locations) { <option value="@l.Id">@l.Display</option> }
+                            <option value="new">+ New location…</option>
+                        </select>
+                    </label>
+                    @if (_detail != null && _edit.Qty.Trim() != _detail.Part.Qty)
+                    {
+                        <label class="field span-all"><span>Why the quantity changes (kept in the history)</span>
+                            <input class="input" @bind="_edit.QtyReason" placeholder="Counted, found more, used outside a project…" /></label>
+                    }
+                    <label class="field span-all"><span>Datasheet link</span><input class="input" @bind="_edit.DatasheetUrl" @bind:event="oninput" placeholder="https://…" /></label>
+                    <label class="field span-all"><span>Notes (facts about the part, never project usage)</span>
+                        <textarea class="input" rows="2" @bind="_edit.Notes" @bind:event="oninput"></textarea></label>
+                </div>
+                <div class="row gap" style="margin-top:12px">
+                    <button class="btn primary" disabled="@(!IsDirty || Busy)" @onclick="Save"><Icon Name="check" /> @(_detail == null ? "Create" : "Save")</button>
+                    @if (IsDirty && _detail != null)
+                    {
+                        <button class="btn" @onclick="ResetEdit">Revert</button>
+                    }
+                    <div class="grow"></div>
+                    @if (_detail != null)
+                    {
+                        <button class="btn small danger" @onclick="Delete"><Icon Name="trash" Size="15" /> Delete</button>
+                    }
+                </div>
+
+                @if (_detail != null)
+                {
+                    <div class="section">
+                        <header><h3>Projects</h3><span class="muted small">@(p!.Reserved) reserved · @(p.Used) used</span></header>
+                        @if (_detail.Allocations.Count == 0)
+                        {
+                            <p class="muted small">Not used by any board yet.</p>
+                        }
+                        <div class="list">
+                            @foreach (var a in _detail.Allocations)
+                            {
+                                <a class="list-item" href="@($"revisions/{a.RevisionId}")" style="color:inherit">
+                                    <div class="main">
+                                        <div>@a.Project · <strong>@a.Device</strong> rev @a.Rev</div>
+                                        <div class="sub">@a.Designators @(a.Notes.Length > 0 ? "· " + a.Notes : "")</div>
+                                    </div>
+                                    <span class="nowrap">× @a.Qty</span>
+                                    <Badge Kind="@(a.Status == AllocationStatus.Used ? "muted" : "accent")">@a.Status.ToString().ToLowerInvariant()</Badge>
+                                </a>
+                            }
+                        </div>
+                    </div>
+
+                    @if (_detail.OrderLines.Count > 0)
+                    {
+                        <div class="section">
+                            <header><h3>Orders</h3></header>
+                            <div class="list">
+                                @foreach (var o in _detail.OrderLines)
+                                {
+                                    <a class="list-item" href="@($"orders/{o.OrderId}")" style="color:inherit">
+                                        <div class="main">
+                                            <div>@(o.Supplier.Length > 0 ? o.Supplier : "No supplier") @o.OrderNumber</div>
+                                            <div class="sub">@Format.Date(o.ReceivedAt ?? o.OrderedAt)</div>
+                                        </div>
+                                        <span class="nowrap">× @o.Qty</span>
+                                        <span class="muted small nowrap">@Format.Money(o.UnitPrice, o.Currency)</span>
+                                        <Badge Kind="@Format.OrderClass(o.Status)">@o.Status</Badge>
+                                    </a>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+                break;
+
+            case Tab.Photos:
+                <PhotoGallery Owner="PhotoOwner.Part" OwnerId="_detail!.Part.Id" Photos="_detail.Photos" OnChanged="ReloadAsync" />
+                break;
+
+            case Tab.Sheet:
+                <MarkdownBlock Text="@_detail!.Sheet" OnSave="SaveSheet" EmptyText="No technical sheet yet. Modules and ICs deserve one: key characteristics, pinout, gotchas."
+                               EmptyAction="Create from template" Template="@Markdown.SheetTemplate(_detail.Part.Ref, _detail.Part.Designation)" Rows="24" />
+                break;
+
+            case Tab.Datasheet:
+                var part = _detail!.Part;
+                <div class="row gap" style="margin-bottom:10px">
+                    @if (_detail.DatasheetFileUrl != null)
+                    {
+                        <a class="btn small" href="@ExternalUrl(_detail.DatasheetFileUrl)" target="_blank"><Icon Name="external" Size="15" /> Open the PDF</a>
+                    }
+                    @if (part.DatasheetUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <a class="btn small" href="@part.DatasheetUrl" target="_blank"><Icon Name="external" Size="15" /> Web link</a>
+                        <button class="btn small" disabled="@Busy" @onclick="FetchDatasheet"><Icon Name="download" Size="15" /> @(part.HasLocalDatasheet ? "Download again" : "Keep offline copy")</button>
+                    }
+                    <label class="btn small" style="position:relative">
+                        <Icon Name="upload" Size="15" /> Attach PDF
+                        <InputFile OnChange="AttachDatasheet" accept=".pdf,application/pdf" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+                    </label>
+                    @if (_detail.DatasheetFileUrl != null)
+                    {
+                        <button class="btn small danger" @onclick="RemoveDatasheet"><Icon Name="trash" Size="15" /> Remove offline copy</button>
+                    }
+                </div>
+                @if (_detail.DatasheetFileUrl != null)
+                {
+                    <iframe class="pdf-frame" src="@Url(_detail.DatasheetFileUrl)" title="Datasheet of @part.Ref"></iframe>
+                }
+                else if (part.DatasheetUrl.Length > 0)
+                {
+                    <p class="muted">No offline copy: the web link opens in the browser. "Keep offline copy" downloads it to the server when the link is a PDF.</p>
+                }
+                else
+                {
+                    <p class="muted">No datasheet. Add a link in Details, or attach a PDF.</p>
+                }
+                break;
+
+            case Tab.Notes:
+                <div class="md-toolbar">
+                    <span class="muted small grow">Free notes: measurements, tests, wiring. Saved as you type.</span>
+                    <span class="muted small">@_notesState</span>
+                    <button class="btn small" @onclick="() => _notesPreview = !_notesPreview">@(_notesPreview ? "Edit" : "Preview")</button>
+                </div>
+                @if (_notesPreview)
+                {
+                    <MarkdownView Text="@_notes" />
+                }
+                else
+                {
+                    <textarea class="md-editor" rows="18" value="@_notes" @oninput="OnNotesInput" placeholder="Measured 4.98 V at the output under 1 A…"></textarea>
+                }
+                break;
+
+            case Tab.History:
+                @if (_detail!.History.Count == 0)
+                {
+                    <p class="muted">No change recorded yet.</p>
+                }
+                <div class="list">
+                    @foreach (var h in _detail.History)
+                    {
+                        <div class="list-item">
+                            <div class="main">
+                                <div>@h.Summary</div>
+                                <div class="sub">@Format.DateTime(h.At) · @Format.SourceText(h.Source)</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                break;
+        }
+    </div>
+}
+
+<Modal @bind-Show="_showLocation" Title="New location">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Code (printed on the label)</span><input class="input" @bind="_location.Code" placeholder="A3, BOX-12…" /></label>
+            <label class="field"><span>Name</span><input class="input" @bind="_location.Name" placeholder="Drawer cabinet A, drawer 3" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showLocation = false">Cancel</button>
+        <button class="btn primary" @onclick="CreateLocation">Create</button>
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showOrder" Title="@($"Add {_detail?.Part.Ref} to an order")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Quantity</span><input class="input" type="number" min="1" @bind="_order.Qty" /></label>
+            <label class="field"><span>Supplier</span><input class="input" @bind="_order.Supplier" placeholder="AliExpress, LCSC, Amazon…" /></label>
+            <label class="field"><span>Unit price</span><input class="input" type="number" step="0.0001" @bind="_order.UnitPrice" /></label>
+            <label class="field span-all"><span>Listing link or remark</span><input class="input" @bind="_order.Notes" /></label>
+        </div>
+        <p class="muted small">Goes to the draft order of that supplier (created when there is none).</p>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showOrder = false">Cancel</button>
+        <button class="btn primary" @onclick="AddToOrder"><Icon Name="cart" /> Add</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int? PartId { get; set; }
+    /// <summary>Create mode: the pre-filled form of a new part.</summary>
+    [Parameter] public PartEdit? NewPart { get; set; }
+    [Parameter] public List<LocationDto> Locations { get; set; } = [];
+    [Parameter] public List<string> Categories { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<int> OnSelect { get; set; }
+    [Parameter] public EventCallback<PartEdit> OnNewSimilar { get; set; }
+
+    enum Tab { Details, Photos, Sheet, Datasheet, Notes, History }
+
+    PartDetail? _detail;
+    PartEdit _edit = new();
+    Tab _tab = Tab.Details;
+    int? _loadedId;
+    PartEdit? _loadedNew;
+    string _notes = "";
+    string _notesState = "";
+    bool _notesPreview;
+    CancellationTokenSource? _notesSave;
+    bool _showLocation, _showOrder;
+    LocationEdit _location = new();
+    AddToOrder _order = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (NewPart != null && !ReferenceEquals(NewPart, _loadedNew))
+        {
+            _loadedNew = NewPart;
+            _loadedId = null;
+            _detail = null;
+            _tab = Tab.Details;
+            _edit = Clone(NewPart);
+        }
+        else if (NewPart == null && PartId != _loadedId)
+        {
+            _loadedNew = null;
+            _loadedId = PartId;
+            _detail = null;
+            await LoadAsync(resetEdit: true);
+        }
+    }
+
+    protected override bool IsRelevant(ChangeEvent change) =>
+        _detail != null && (change.Scope == ChangeScope.All || (change.Scope == ChangeScope.Part && change.Id == _detail.Part.Id)
+            || change.Scope is ChangeScope.Project or ChangeScope.Order or ChangeScope.Location);
+
+    protected override Task ReloadAsync() => LoadAsync(resetEdit: false);
+
+    async Task LoadAsync(bool resetEdit)
+    {
+        if (PartId == null) return;
+        var wasDirty = IsDirty;
+        _detail = await Api.GetPartAsync(PartId.Value);
+        if (_detail == null)
+        {
+            Toasts.Error("This part no longer exists.");
+            await OnClose.InvokeAsync();
+            return;
+        }
+        if (resetEdit || !wasDirty) ResetEdit();
+        if (resetEdit || _notesSave == null) _notes = _detail.FreeNotes;
+        _order = new AddToOrder { PartId = _detail.Part.Id, Qty = Math.Max(1, _detail.Part.Reserved - _detail.Part.ParsedQty.Value) };
+    }
+
+    void ResetEdit()
+    {
+        if (_detail == null) return;
+        var p = _detail.Part;
+        _edit = new PartEdit
+        {
+            Id = p.Id, Ref = p.Ref, Category = p.Category, Designation = p.Designation, Qty = p.Qty,
+            LocationId = p.LocationId, DatasheetUrl = p.DatasheetUrl, Notes = p.Notes,
+        };
+    }
+
+    static PartEdit Clone(PartEdit e) => new()
+    {
+        Id = e.Id, Ref = e.Ref, Category = e.Category, Designation = e.Designation, Qty = e.Qty,
+        LocationId = e.LocationId, DatasheetUrl = e.DatasheetUrl, Notes = e.Notes,
+    };
+
+    bool IsDirty => _detail == null
+        ? _edit.Ref.Trim().Length > 0
+        : _edit.Ref.Trim() != _detail.Part.Ref || _edit.Category.Trim().ToLowerInvariant() != _detail.Part.Category
+          || _edit.Designation.Trim() != _detail.Part.Designation || _edit.Qty.Trim() != _detail.Part.Qty
+          || _edit.LocationId != _detail.Part.LocationId || _edit.DatasheetUrl.Trim() != _detail.Part.DatasheetUrl
+          || _edit.Notes.Trim() != _detail.Part.Notes;
+
+    RenderFragment TabButton(Tab tab, string title, int? count) =>
+        @<button class="tab @(_tab == tab ? "on" : "")" @onclick="() => _tab = tab">
+            @title @if (count > 0) { <span class="count">@count</span> }
+        </button>;
+
+    bool CanStep(int delta)
+    {
+        var q = Qty.Parse(_edit.Qty);
+        return (q.Kind is QtyKind.Exact or QtyKind.Blank) && (delta > 0 || q.Value > 0);
+    }
+
+    void Step(int delta)
+    {
+        var q = Qty.Parse(_edit.Qty);
+        _edit.Qty = Math.Max(0, q.Value + delta).ToString(CultureInfo.InvariantCulture);
+    }
+
+    void OnLocation(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (value == "new")
+        {
+            _location = new LocationEdit();
+            _showLocation = true;
+            return;
+        }
+        _edit.LocationId = int.TryParse(value, out var id) ? id : null;
+    }
+
+    async Task CreateLocation()
+    {
+        await Try(async () =>
+        {
+            var created = await Api.SaveLocationAsync(_location);
+            Locations = [.. Locations, created];
+            _edit.LocationId = created.Id;
+            _showLocation = false;
+        });
+    }
+
+    async Task Save()
+    {
+        await Try(async () =>
+        {
+            var saved = await Api.SavePartAsync(_edit);
+            if (_detail == null)
+            {
+                Toasts.Success($"{saved.Part.Ref} added");
+                await OnSelect.InvokeAsync(saved.Part.Id);
+                return;
+            }
+            _detail = saved;
+            ResetEdit();
+            Toasts.Success("Saved");
+        });
+    }
+
+    async Task Delete()
+    {
+        if (_detail == null || !await Js.ConfirmAsync($"Delete {_detail.Part.Ref} from the stock? Its photos go to the server trash folder.")) return;
+        if (await Try(() => Api.DeletePartAsync(_detail.Part.Id), $"{_detail.Part.Ref} deleted"))
+            await OnClose.InvokeAsync();
+    }
+
+    async Task AddSimilar()
+    {
+        if (_detail == null) return;
+        var p = _detail.Part;
+        var cut = p.Ref.LastIndexOf('-');
+        await OnNewSimilar.InvokeAsync(new PartEdit
+        {
+            Ref = cut > 0 ? p.Ref[..(cut + 1)] : p.Ref,
+            Category = p.Category,
+            Designation = p.Designation,
+            LocationId = p.LocationId,
+            DatasheetUrl = p.DatasheetUrl,
+        });
+    }
+
+    async Task<bool> SaveSheet(string markdown) =>
+        await Try(async () =>
+        {
+            await Api.SaveSheetAsync(_detail!.Part.Id, markdown);
+            await LoadAsync(resetEdit: false);
+        }, "Sheet saved");
+
+    void OnNotesInput(ChangeEventArgs e)
+    {
+        _notes = e.Value?.ToString() ?? "";
+        _notesState = "Editing…";
+        _notesSave?.Cancel();
+        var cts = _notesSave = new CancellationTokenSource();
+        var partId = _detail!.Part.Id;
+        var text = _notes;
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await Task.Delay(800, cts.Token);
+                await Api.SaveFreeNotesAsync(partId, text, cts.Token);
+                _notesState = "Saved";
+                if (ReferenceEquals(_notesSave, cts)) _notesSave = null;
+                StateHasChanged();
+            }
+            catch (TaskCanceledException) { }
+            catch (Exception ex)
+            {
+                _notesState = "Not saved";
+                Toasts.Error(ex.Message);
+                StateHasChanged();
+            }
+        });
+    }
+
+    async Task FetchDatasheet() =>
+        await Try(async () =>
+        {
+            await Api.FetchDatasheetAsync(_detail!.Part.Id);
+            await LoadAsync(resetEdit: false);
+        }, "Datasheet kept offline");
+
+    async Task AttachDatasheet(InputFileChangeEventArgs e) =>
+        await Try(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(64L * 1024 * 1024);
+            await Api.UploadDatasheetAsync(_detail!.Part.Id, e.File.Name, stream);
+            await LoadAsync(resetEdit: false);
+        }, "Datasheet attached");
+
+    async Task RemoveDatasheet()
+    {
+        if (!await Js.ConfirmAsync("Remove the offline PDF? (the web link stays)")) return;
+        await Try(async () =>
+        {
+            await Api.DeleteDatasheetAsync(_detail!.Part.Id);
+            await LoadAsync(resetEdit: false);
+        });
+    }
+
+    async Task AddToOrder() =>
+        await Try(async () =>
+        {
+            var order = await Api.AddToOrderAsync(_order);
+            _showOrder = false;
+            Toasts.Success($"Added to {order.Title} ({order.Status.ToString().ToLowerInvariant()})");
+            await LoadAsync(resetEdit: false);
+        });
+
+    public override void Dispose()
+    {
+        // Notes typed less than a debounce ago are saved anyway.
+        if (_notesSave != null && _detail != null)
+        {
+            _notesSave.Cancel();
+            _ = Api.SaveFreeNotesAsync(_detail.Part.Id, _notes);
+        }
+        base.Dispose();
+    }
+}

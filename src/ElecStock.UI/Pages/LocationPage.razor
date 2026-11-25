@@ -1,0 +1,79 @@
+@page "/locations/{Code}"
+@inherits StockComponentBase
+
+<PageTitle>@Code · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="breadcrumb"><a href="locations">Locations</a> <Icon Name="right" Size="14" /> <span>@Code</span></div>
+    @if (_loaded && _detail == null)
+    {
+        <EmptyState Icon="pin" Title="@($"No location {Code}")" Text="It may have been renamed or deleted." />
+    }
+    else if (_detail != null)
+    {
+        var l = _detail.Location;
+        <div class="page-header">
+            <h1>@l.Code</h1>
+            @if (l.Name.Length > 0 && l.Name != l.Code)
+            {
+                <span class="muted" style="font-size:16px">@l.Name</span>
+            }
+            <div class="grow"></div>
+            <a class="btn" href="@($"locations/labels?codes={Uri.EscapeDataString(l.Code)}")"><Icon Name="qr" /> Label</a>
+        </div>
+        @if (l.Description.Length > 0)
+        {
+            <p class="muted" style="margin-top:-6px">@l.Description</p>
+        }
+
+        <div class="row gap" style="margin-bottom:14px">
+            <PartPicker OnPicked="Assign" Placeholder="Put a part here: search the stock…" />
+        </div>
+
+        @if (_detail.Parts.Count == 0)
+        {
+            <EmptyState Icon="box" Title="Empty" Text="No part is stored here yet." />
+        }
+        else
+        {
+            <div class="tiles">
+                @foreach (var part in _detail.Parts)
+                {
+                    <a class="tile" href="@($"stock?part={part.Id}")" title="@part.AvailableLong" style="text-decoration:none">
+                        <PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" />
+                        <span class="tile-ref">@part.Ref</span>
+                        <span class="tile-des">@part.Designation</span>
+                        <span class="tile-foot"><Badge Kind="@Format.StatusClass(part.Status)">@part.AvailableShort</Badge></span>
+                    </a>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string Code { get; set; } = "";
+
+    LocationDetail? _detail;
+    bool _loaded;
+
+    protected override async Task OnParametersSetAsync() => await ReloadAsync();
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Location or ChangeScope.Part;
+
+    protected override async Task ReloadAsync()
+    {
+        _detail = await Api.GetLocationAsync(Code);
+        _loaded = true;
+    }
+
+    async Task Assign(PartSummary part) => await Try(async () =>
+    {
+        await Api.SavePartAsync(new PartEdit
+        {
+            Id = part.Id, Ref = part.Ref, Category = part.Category, Designation = part.Designation, Qty = part.Qty,
+            DatasheetUrl = part.DatasheetUrl, Notes = part.Notes, LocationId = _detail!.Location.Id,
+        });
+        await ReloadAsync();
+    }, $"{part.Ref} is now in {Code}");
+}

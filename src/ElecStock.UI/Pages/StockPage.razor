@@ -1,0 +1,270 @@
+@page "/"
+@page "/stock"
+@inherits StockComponentBase
+
+<PageTitle>Stock · ElecStock</PageTitle>
+
+<div class="stock-layout">
+    <div class="stock-main">
+        <div class="page wide">
+            <div class="page-header">
+                <h1>Stock</h1>
+                <div class="search">
+                    <Icon Name="search" />
+                    <input type="search" class="input" placeholder="Search ref, designation, notes, project, designator, photo caption…"
+                           @bind="_search" @bind:event="oninput" />
+                </div>
+                <div class="grow"></div>
+                <div class="segmented" role="group" aria-label="View">
+                    <button class="@(_view == "tiles" ? "on" : "")" title="Tiles" @onclick='() => SetView("tiles")'><Icon Name="grid" /></button>
+                    <button class="@(_view == "list" ? "on" : "")" title="List" @onclick='() => SetView("list")'><Icon Name="list" /></button>
+                </div>
+                <button class="btn primary" @onclick="NewPart"><Icon Name="plus" /> Part</button>
+            </div>
+
+            @if (_overview == null)
+            {
+                <p class="muted">Loading…</p>
+            }
+            else
+            {
+                <div class="counters">
+                    @Counter(StockFilter.All, _overview.Parts.Count, "parts", "")
+                    @Counter(StockFilter.InStock, _overview.Parts.Count(p => p.Status == StockStatus.Ok), "in stock", "ok")
+                    @Counter(StockFilter.Reserved, _overview.Parts.Count(p => p.Reserved > 0), "reserved", "")
+                    @Counter(StockFilter.NeedsBuying, _overview.Parts.Count(p => p.NeedsBuying), "to buy / short", "bad")
+                    @Counter(StockFilter.OnOrder, _overview.Parts.Count(p => p.OnOrder > 0), "on order", "order")
+                    @Counter(StockFilter.Uncounted, _overview.Parts.Count(IsUncounted), "not counted", "warn")
+                    @Counter(StockFilter.NoPhoto, _overview.Parts.Count(p => p.PhotoCount == 0), "without photo", "")
+                </div>
+
+                <div class="chips" style="margin-top:12px">
+                    <button class="chip @(_category == null ? "on" : "")" @onclick="() => _category = null">All</button>
+                    @foreach (var cat in _overview.Parts.GroupBy(p => p.Category).OrderBy(g => PartVisuals.CategoryRank(g.Key)))
+                    {
+                        var name = cat.Key;
+                        <button class="chip @(_category == name ? "on" : "")" @onclick="() => _category = _category == name ? null : name">
+                            <span class="dot" style="background:@PartVisuals.CategoryColor(name)"></span>
+                            @PartVisuals.CategoryTitle(name) <span class="count">@cat.Count()</span>
+                        </button>
+                    }
+                </div>
+
+                var visible = Visible().ToList();
+                @if (visible.Count == 0)
+                {
+                    <EmptyState Icon="search" Title="No part matches" Text="Change the search or the filters.">
+                        <button class="btn" @onclick="ClearFilters">Clear filters</button>
+                    </EmptyState>
+                }
+                else if (_view == "tiles")
+                {
+                    @foreach (var group in visible.GroupBy(p => PartVisuals.DisplayGroup(p.Ref, p.Category)))
+                    {
+                        <div class="group-title">
+                            <span class="dot" style="background:@PartVisuals.CategoryColor(group.First().Category)"></span>
+                            @group.Key <span class="count">@group.Count()</span>
+                        </div>
+                        <div class="tiles">
+                            @foreach (var part in group)
+                            {
+                                <button class="tile @(part.Id == Part ? "selected" : "")" @onclick="() => Select(part.Id)" title="@part.AvailableLong">
+                                    <PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" />
+                                    <span class="tile-ref">@part.Ref</span>
+                                    <span class="tile-des">@part.Designation</span>
+                                    <span class="tile-foot">
+                                        @if (part.LocationDisplay.Length > 0)
+                                        {
+                                            <span class="loc" title="@part.LocationDisplay"><Icon Name="pin" Size="12" /> @part.LocationCode</span>
+                                        }
+                                        @if (part.OnOrder > 0)
+                                        {
+                                            <Badge Kind="order" Title="@($"{part.OnOrder} on order")"><Icon Name="truck" Size="11" /></Badge>
+                                        }
+                                        <Badge Kind="@Format.StatusClass(part.Status)" Title="@part.StatusTitle">@part.AvailableShort</Badge>
+                                    </span>
+                                </button>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="card table-wrap" style="margin-top:14px">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th></th>
+                                    @SortHeader("ref", "Ref")
+                                    @SortHeader("designation", "Designation")
+                                    @SortHeader("category", "Category")
+                                    @SortHeader("qty", "Qty")
+                                    @SortHeader("available", "Available")
+                                    @SortHeader("location", "Location")
+                                    <th>Projects</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var part in Sorted(visible))
+                                {
+                                    <tr class="clickable @(part.Id == Part ? "selected" : "")" @onclick="() => Select(part.Id)">
+                                        <td><PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" Class="xs" /></td>
+                                        <td class="nowrap"><strong>@part.Ref</strong></td>
+                                        <td>@part.Designation</td>
+                                        <td class="muted">@PartVisuals.CategoryTitle(part.Category)</td>
+                                        <td class="num">@StockMath.QtyDisplay(part.ParsedQty)</td>
+                                        <td><Badge Kind="@Format.StatusClass(part.Status)" Title="@part.AvailableLong">@part.AvailableShort</Badge></td>
+                                        <td class="muted">@part.LocationDisplay</td>
+                                        <td class="muted small">@string.Join(", ", part.Projects)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    @if (Part != null || _newPart != null)
+    {
+        <aside class="stock-pane">
+            <PartPane PartId="Part" NewPart="_newPart" Locations="_overview?.Locations ?? []" Categories="Categories()"
+                      OnClose="ClosePane" OnSelect="Select" OnNewSimilar="NewSimilar" />
+        </aside>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery] public int? Part { get; set; }
+    [SupplyParameterFromQuery(Name = "ref")] public string? RefQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "filter")] public string? FilterQuery { get; set; }
+
+    enum StockFilter { All, InStock, Reserved, NeedsBuying, OnOrder, Uncounted, NoPhoto }
+
+    StockOverview? _overview;
+    string _search = "";
+    string? _category;
+    StockFilter _filter;
+    string _view = "tiles";
+    string _sort = "ref";
+    bool _sortDesc;
+    PartEdit? _newPart;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Enum.TryParse<StockFilter>(FilterQuery, true, out var f)) _filter = f;
+        await ReloadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(RefQuery))
+        {
+            var part = _overview?.Parts.FirstOrDefault(p => p.Ref.Equals(RefQuery, StringComparison.OrdinalIgnoreCase))
+                ?? (await Api.GetPartByRefAsync(RefQuery))?.Part;
+            if (part != null) Nav.NavigateTo($"stock?part={part.Id}", replace: true);
+            else Toasts.Error($"No part '{RefQuery}' in the stock.");
+        }
+        if (Part != null) _newPart = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var view = await Js.GetSettingAsync("stockView");
+        if (view is "tiles" or "list" && view != _view)
+        {
+            _view = view;
+            StateHasChanged();
+        }
+    }
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Part or ChangeScope.Location or ChangeScope.Order or ChangeScope.Project;
+
+    protected override async Task ReloadAsync() => _overview = await Api.GetStockAsync();
+
+    static bool IsUncounted(PartSummary p) => p.ParsedQty.Kind == QtyKind.Blank || p.Status == StockStatus.Check;
+
+    IEnumerable<PartSummary> Visible()
+    {
+        var terms = _search.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return _overview!.Parts
+            .Where(p => _category == null || p.Category == _category)
+            .Where(p => _filter switch
+            {
+                StockFilter.InStock => p.Status == StockStatus.Ok,
+                StockFilter.Reserved => p.Reserved > 0,
+                StockFilter.NeedsBuying => p.NeedsBuying,
+                StockFilter.OnOrder => p.OnOrder > 0,
+                StockFilter.Uncounted => IsUncounted(p),
+                StockFilter.NoPhoto => p.PhotoCount == 0,
+                _ => true,
+            })
+            .Where(p => terms.All(t => p.SearchText.Contains(t)))
+            .OrderBy(p => p, Comparer<PartSummary>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category)));
+    }
+
+    IEnumerable<PartSummary> Sorted(List<PartSummary> parts)
+    {
+        IOrderedEnumerable<PartSummary> sorted = _sort switch
+        {
+            "designation" => parts.OrderBy(p => p.Designation, StringComparer.OrdinalIgnoreCase),
+            "category" => parts.OrderBy(p => PartVisuals.CategoryRank(p.Category)).ThenBy(p => p.Ref, PartVisuals.RefComparer),
+            "qty" => parts.OrderBy(p => p.ParsedQty.Kind == QtyKind.Blank ? -1 : p.ParsedQty.Value),
+            "available" => parts.OrderBy(p => p.ParsedQty.Value - p.Reserved),
+            "location" => parts.OrderBy(p => p.LocationDisplay, StringComparer.OrdinalIgnoreCase),
+            _ => parts.OrderBy(p => p.Ref, PartVisuals.RefComparer),
+        };
+        return _sortDesc ? sorted.Reverse() : sorted;
+    }
+
+    List<string> Categories() => _overview?.Parts.Select(p => p.Category).Where(c => c.Length > 0).Distinct().OrderBy(PartVisuals.CategoryRank).ToList() ?? [];
+
+    RenderFragment Counter(StockFilter filter, int count, string label, string kind) =>
+        @<button class="counter @kind @(_filter == filter ? "on" : "")" @onclick="() => _filter = _filter == filter && filter != StockFilter.All ? StockFilter.All : filter">
+            <strong>@count</strong><span>@label</span>
+        </button>;
+
+    RenderFragment SortHeader(string key, string title) =>
+        @<th class="sortable" @onclick="() => { if (_sort == key) _sortDesc = !_sortDesc; else { _sort = key; _sortDesc = false; } }">
+            @title @(_sort == key ? (_sortDesc ? "▾" : "▴") : "")
+        </th>;
+
+    void ClearFilters()
+    {
+        _search = "";
+        _category = null;
+        _filter = StockFilter.All;
+    }
+
+    async Task SetView(string view)
+    {
+        _view = view;
+        await Js.SetSettingAsync("stockView", view);
+    }
+
+    void Select(int id)
+    {
+        _newPart = null;
+        Nav.NavigateTo($"stock?part={id}");
+    }
+
+    void ClosePane()
+    {
+        _newPart = null;
+        if (Part != null) Nav.NavigateTo("stock");
+    }
+
+    void NewPart()
+    {
+        _newPart = new PartEdit { Category = _category ?? "" };
+        if (Part != null) Nav.NavigateTo("stock");
+    }
+
+    void NewSimilar(PartEdit template)
+    {
+        _newPart = template;
+        Nav.NavigateTo("stock");
+    }
+}

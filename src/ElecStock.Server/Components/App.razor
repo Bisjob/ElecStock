@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <base href="/" />
+    <title>ElecStock</title>
+    <link rel="icon" type="image/svg+xml" href="_content/ElecStock.UI/icon.svg" />
+    <link rel="apple-touch-icon" href="_content/ElecStock.UI/icon.svg" />
+    <meta name="theme-color" content="#2F6FEB" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="stylesheet" href="@Assets["_content/ElecStock.UI/app.css"]" />
+    <script>
+        // Theme before the first paint (no flash of the wrong theme).
+        try {
+            var t = localStorage.getItem("elecstock.theme");
+            if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+        } catch (e) { }
+    </script>
+    <HeadOutlet @rendermode="Mode" />
+</head>
+<body>
+    <Routes @rendermode="Mode" />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+</html>
+
+@code {
+    // The UI talks to the database directly from the circuit; prerendering would load every page twice.
+    static readonly IComponentRenderMode Mode = new InteractiveServerRenderMode(prerender: false);
+}

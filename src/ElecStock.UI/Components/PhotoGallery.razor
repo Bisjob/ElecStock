@@ -1,0 +1,227 @@
+@inherits StockComponentBase
+@implements IAsyncDisposable
+@* Photos of a part, a project or a board revision: add (files, camera, drop, Ctrl+V), caption,
+   numbered markers pinned on the photo (pinouts), cover, remove. *@
+
+<div class="gallery">
+    @if (_current != null)
+    {
+        <div class="viewer @(_addingMarker ? "adding" : "")">
+            <div class="viewer-frame">
+                <img @ref="_image" src="@Url(_current.Url)" alt="@_current.FileName" @onclick="OnImageClick" />
+                @for (int i = 0; i < _markers.Count; i++)
+                {
+                    var marker = _markers[i];
+                    <span class="marker" style="left:@Pct(marker.X);top:@Pct(marker.Y)" title="@marker.Label">@(i + 1)</span>
+                }
+            </div>
+            <div class="viewer-tools">
+                <button class="btn small @(_addingMarker ? "primary" : "")" title="Click on the photo to pin a numbered marker"
+                        @onclick="() => _addingMarker = !_addingMarker">
+                    <Icon Name="crosshair" Size="15" /> @(_addingMarker ? "Click on the photo…" : "Add marker")
+                </button>
+                <button class="btn small" disabled="@_current.IsCover" title="Use as the picture of the tile" @onclick="SetCover">
+                    <Icon Name="star" Size="15" /> @(_current.IsCover ? "Cover" : "Set as cover")
+                </button>
+                <a class="btn small" href="@ExternalUrl(_current.Url)" target="_blank" title="Open the full-size photo"><Icon Name="external" Size="15" /></a>
+                <button class="btn small danger" title="Remove the photo" @onclick="Remove"><Icon Name="trash" Size="15" /></button>
+                <span class="muted small grow right">@_current.FileName · @_current.Width × @_current.Height</span>
+            </div>
+            <input class="input" placeholder="Caption (what is on the photo, where it comes from…)" @bind="_caption" @bind:after="SaveMeta" />
+            @if (_markers.Count > 0)
+            {
+                <ol class="marker-list">
+                    @for (int i = 0; i < _markers.Count; i++)
+                    {
+                        var marker = _markers[i];
+                        <li>
+                            <span class="marker static">@(i + 1)</span>
+                            <input class="input" placeholder="Label (pin name, part…)" @bind="marker.Label" @bind:after="SaveMeta" />
+                            <button class="icon-btn" title="Remove the marker" @onclick="() => RemoveMarker(marker)"><Icon Name="x" Size="15" /></button>
+                        </li>
+                    }
+                </ol>
+            }
+        </div>
+    }
+
+    <div class="thumbs-strip">
+        @foreach (var photo in Photos)
+        {
+            <button class="strip-item @(photo.Id == _current?.Id ? "selected" : "")" @onclick="() => Select(photo)" title="@photo.Caption">
+                <img src="@Url(photo.ThumbUrl)" alt="@photo.FileName" loading="lazy" />
+                @if (photo.IsCover)
+                {
+                    <span class="strip-cover"><Icon Name="star" Size="12" /></span>
+                }
+            </button>
+        }
+        <label class="strip-add" title="Add photos">
+            <Icon Name="plus" />
+            <InputFile OnChange="Upload" multiple accept="image/*" />
+        </label>
+        <label class="strip-add" title="Take a photo (phone camera)">
+            <Icon Name="camera" />
+            <InputFile OnChange="Upload" accept="image/*" capture="environment" />
+        </label>
+    </div>
+
+    <div class="dropzone @(_uploading ? "busy" : "")">
+        <Icon Name="upload" />
+        <span>@(_uploading ? "Uploading…" : "Drop images here, click, or paste a screenshot (Ctrl+V)")</span>
+        <InputFile OnChange="Upload" multiple accept="image/*" />
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PhotoOwner Owner { get; set; }
+    [Parameter, EditorRequired] public int OwnerId { get; set; }
+    [Parameter] public List<PhotoDto> Photos { get; set; } = [];
+    /// <summary>Called after a change, so the owner page reloads its data.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    const long MaxBytes = 40L * 1024 * 1024;
+    PhotoDto? _current;
+    string _caption = "";
+    List<PhotoMarker> _markers = [];
+    bool _addingMarker, _uploading;
+    ElementReference _image;
+    DotNetObjectReference<PhotoGallery>? _self;
+    IJSObjectReference? _pasteListener;
+    int _lastOwnerId;
+
+    // The owner page reloads and passes the new photos.
+    protected override bool IsRelevant(ChangeEvent change) => false;
+
+    protected override void OnParametersSet()
+    {
+        if (OwnerId != _lastOwnerId)
+        {
+            _lastOwnerId = OwnerId;
+            _current = null;
+        }
+        var keep = _current == null ? null : Photos.FirstOrDefault(p => p.Id == _current.Id);
+        if (keep == null) Select(Photos.FirstOrDefault(p => p.IsCover) ?? Photos.FirstOrDefault());
+        else if (!ReferenceEquals(keep, _current)) Select(keep);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _self = DotNetObjectReference.Create(this);
+        _pasteListener = await Js.ListenPasteAsync(_self);
+    }
+
+    void Select(PhotoDto? photo)
+    {
+        _current = photo;
+        _caption = photo?.Caption ?? "";
+        _markers = photo?.Markers.Select(m => new PhotoMarker { X = m.X, Y = m.Y, Label = m.Label }).ToList() ?? [];
+        _addingMarker = false;
+    }
+
+    static string Pct(double v) => (v * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+
+    async Task OnImageClick(MouseEventArgs e)
+    {
+        if (!_addingMarker || _current == null) return;
+        var box = await Js.BoxAsync(_image);
+        if (box.Width <= 0 || box.Height <= 0) return;
+        _markers.Add(new PhotoMarker
+        {
+            X = Math.Clamp((e.ClientX - box.Left) / box.Width, 0, 1),
+            Y = Math.Clamp((e.ClientY - box.Top) / box.Height, 0, 1),
+        });
+        _addingMarker = false;
+        await SaveMeta();
+    }
+
+    async Task RemoveMarker(PhotoMarker marker)
+    {
+        _markers.Remove(marker);
+        await SaveMeta();
+    }
+
+    async Task SaveMeta()
+    {
+        if (_current == null) return;
+        var id = _current.Id;
+        await Try(async () =>
+        {
+            _current = await Api.UpdatePhotoAsync(id, new PhotoEdit { Caption = _caption, Markers = _markers });
+            await OnChanged.InvokeAsync();
+        });
+    }
+
+    async Task SetCover()
+    {
+        if (_current == null) return;
+        await Try(async () =>
+        {
+            await Api.SetCoverAsync(_current.Id);
+            await OnChanged.InvokeAsync();
+        });
+    }
+
+    async Task Remove()
+    {
+        if (_current == null || !await Js.ConfirmAsync($"Remove {_current.FileName}? (it goes to the server trash folder)")) return;
+        var id = _current.Id;
+        await Try(async () =>
+        {
+            await Api.DeletePhotoAsync(id);
+            _current = null;
+            await OnChanged.InvokeAsync();
+        }, "Photo removed");
+    }
+
+    async Task Upload(InputFileChangeEventArgs e)
+    {
+        _uploading = true;
+        PhotoDto? last = null;
+        foreach (var file in e.GetMultipleFiles(30))
+        {
+            await Try(async () =>
+            {
+                await using var stream = file.OpenReadStream(MaxBytes);
+                last = await Api.UploadPhotoAsync(Owner, OwnerId, file.Name, stream);
+            });
+        }
+        _uploading = false;
+        if (last != null)
+        {
+            Select(last);
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPasteImage(IJSStreamReference stream, string fileName)
+    {
+        _uploading = true;
+        StateHasChanged();
+        await Try(async () =>
+        {
+            await using var data = await stream.OpenReadStreamAsync(MaxBytes);
+            Select(await Api.UploadPhotoAsync(Owner, OwnerId, fileName, data));
+            await OnChanged.InvokeAsync();
+        }, "Screenshot added");
+        _uploading = false;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_pasteListener != null)
+            {
+                await _pasteListener.InvokeVoidAsync("dispose");
+                await _pasteListener.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        _self?.Dispose();
+        base.Dispose();
+    }
+}

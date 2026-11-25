@@ -1,0 +1,505 @@
+@page "/revisions/{Id:int}"
+@inherits StockComponentBase
+
+<PageTitle>@(_rev?.Title ?? "Revision") · ElecStock</PageTitle>
+
+<div class="page">
+    @if (_rev == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <div class="breadcrumb">
+            <a href="projects">Projects</a> <Icon Name="right" Size="14" />
+            <a href="@($"projects/{_rev.ProjectId}")">@_rev.Project</a> <Icon Name="right" Size="14" />
+            <span>@_rev.Device</span>
+        </div>
+        <div class="page-header">
+            <h1>@_rev.Device <span class="muted">rev @_rev.Rev</span></h1>
+            <div class="grow"></div>
+            <button class="btn" @onclick="OpenBom"><Icon Name="upload" /> Import BOM</button>
+            <button class="btn primary" disabled="@(ReservedCount == 0)" @onclick="OpenBuild"><Icon Name="built" /> Mark as built</button>
+        </div>
+
+        <div class="stepper">
+            @foreach (var (status, index) in Steps.Select((s, i) => (s, i)))
+            {
+                var current = Array.IndexOf(Steps, _rev.Status);
+                <button class="step @(index < current ? "done" : "") @(index == current ? "current" : "")" @onclick="() => SetStatus(status)">
+                    <span class="num">@(index < current ? "✓" : (index + 1).ToString())</span>
+                    <span>@Format.Title(status)<small>@StepDate(status)</small></span>
+                </button>
+            }
+            @if (_rev.Status == RevisionStatus.Abandoned)
+            {
+                <Badge Kind="muted" Class="nowrap" Title="Abandoned">Abandoned</Badge>
+            }
+        </div>
+
+        <div class="stat-row" style="margin-top:14px">
+            <div class="stat"><strong>@_rev.Lines.Count</strong><span>lines</span></div>
+            <div class="stat"><strong>@ReservedCount</strong><span>reserved</span></div>
+            <div class="stat"><strong>@_rev.Lines.Count(l => l.Status == AllocationStatus.Used)</strong><span>used</span></div>
+            <div class="stat"><strong style="color:var(--bad)">@_rev.Lines.Count(l => l.Flag == LineFlag.Short)</strong><span>short</span></div>
+            <div class="stat"><strong style="color:var(--order)">@_rev.Lines.Count(l => l.Flag == LineFlag.OnOrder)</strong><span>on order</span></div>
+            <div class="stat"><strong style="color:var(--warn)">@_rev.Lines.Count(l => l.Flag == LineFlag.Uncounted)</strong><span>to count</span></div>
+            @if (_rev.EstimatedCost != null)
+            {
+                <div class="stat" title="Last known unit prices, from the orders"><strong>@Format.Money(_rev.EstimatedCost, _rev.Currency)</strong><span>@_rev.PricedLines / @_rev.Lines.Count lines priced</span></div>
+            }
+        </div>
+
+        <div class="section">
+            <header>
+                <h2>Parts</h2>
+                <div class="grow"></div>
+                <PartPicker OnPicked="StartAdd" Placeholder="Add a part: search the stock…" />
+            </header>
+            @if (_adding != null)
+            {
+                <div class="card pad row gap" style="margin-bottom:10px">
+                    <strong>@_addingRef</strong>
+                    <label class="field" style="width:90px"><span>Qty</span><input class="input" type="number" min="1" @bind="_adding.Qty" /></label>
+                    <label class="field grow"><span>Designators</span><input class="input" @bind="_adding.Designators" placeholder="Q201 Q202" /></label>
+                    <label class="field grow"><span>Notes</span><input class="input" @bind="_adding.Notes" /></label>
+                    <button class="btn primary" @onclick="SaveAdding"><Icon Name="check" /> Reserve</button>
+                    <button class="btn" @onclick="() => _adding = null">Cancel</button>
+                </div>
+            }
+            @if (_rev.Lines.Count == 0)
+            {
+                <EmptyState Icon="box" Title="No part reserved yet" Text="Search a part above, or import the BOM of the board (bom.csv or a KiCad BOM)." />
+            }
+            else
+            {
+                <div class="card table-wrap">
+                    <table class="table">
+                        <thead>
+                            <tr><th></th><th>Ref</th><th>Designators</th><th class="num">Qty</th><th>State</th><th>Stock</th><th class="num">Unit</th><th>Notes</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in _rev.Lines)
+                            {
+                                <tr>
+                                    <td><PartThumb Ref="@line.Ref" Category="@line.Category" Designation="@line.Designation" ThumbUrl="@line.CoverThumbUrl" Class="xs" /></td>
+                                    <td>
+                                        <a href="@($"stock?part={line.PartId}")"><strong>@line.Ref</strong></a>
+                                        <div class="muted small">@line.Designation</div>
+                                    </td>
+                                    <td class="small">@line.Designators</td>
+                                    <td class="num">@line.Qty</td>
+                                    <td><Badge Kind="@Format.FlagClass(line.Flag)">@Format.FlagText(line.Flag)</Badge></td>
+                                    <td class="small muted" style="min-width:190px">@(line.Status == AllocationStatus.Used ? "" : line.StockText)</td>
+                                    <td class="num small">@Format.Money(line.UnitPrice, _rev.Currency)</td>
+                                    <td class="small">@line.Notes</td>
+                                    <td class="nowrap">
+                                        @if (line.Flag == LineFlag.Short)
+                                        {
+                                            <button class="icon-btn" title="Add to an order" @onclick="() => OrderLine(line)"><Icon Name="cart" Size="15" /></button>
+                                        }
+                                        <button class="icon-btn" title="Edit the line" @onclick="() => EditLine(line)"><Icon Name="edit" Size="15" /></button>
+                                        <button class="icon-btn" title="Remove the line" @onclick="() => RemoveLine(line)"><Icon Name="trash" Size="15" /></button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <div class="section">
+            <header><h2>Notes</h2></header>
+            <div class="card pad">
+                <MarkdownBlock Text="@_rev.Notes" OnSave="SaveNotes" EmptyText="No notes: what changed in this revision, assembly remarks, tests." Rows="12" />
+            </div>
+        </div>
+
+        <div class="section">
+            <header><h2>Photos</h2><span class="muted small">PCB, assembly, wiring</span></header>
+            <div class="card pad">
+                <PhotoGallery Owner="PhotoOwner.Revision" OwnerId="Id" Photos="_rev.Photos" OnChanged="ReloadAsync" />
+            </div>
+        </div>
+
+        <div class="section row gap">
+            <button class="btn small" @onclick="Duplicate"><Icon Name="copy" Size="15" /> Copy the lines to a new revision</button>
+            <button class="btn small" @onclick="() => { _dates = ToEdit(); _showDates = true; }"><Icon Name="edit" Size="15" /> Dates and status</button>
+            <button class="btn small danger" @onclick="DeleteRevision"><Icon Name="trash" Size="15" /> Delete the revision</button>
+        </div>
+    }
+</div>
+
+<Modal @bind-Show="_showLine" Title="@($"Edit {_lineRef}")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Quantity</span><input class="input" type="number" min="1" @bind="_line.Qty" /></label>
+            <label class="field span-all"><span>Designators</span><input class="input" @bind="_line.Designators" /></label>
+            <label class="field span-all"><span>Notes</span><input class="input" @bind="_line.Notes" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showLine = false">Cancel</button>
+        <button class="btn primary" @onclick="SaveLine">Save</button>
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showDates" Title="Dates and status">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Revision</span><input class="input" @bind="_dates.Rev" /></label>
+            <label class="field">
+                <span>Status</span>
+                <select class="input" @bind="_dates.Status">
+                    @foreach (var s in Enum.GetValues<RevisionStatus>()) { <option value="@s">@Format.Title(s)</option> }
+                </select>
+            </label>
+            <label class="field"><span>PCB ordered</span><input class="input" type="date" @bind="_dates.PcbOrderedAt" /></label>
+            <label class="field"><span>PCB received</span><input class="input" type="date" @bind="_dates.PcbReceivedAt" /></label>
+            <label class="field"><span>Built</span><input class="input" type="date" @bind="_dates.BuiltAt" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showDates = false">Cancel</button>
+        <button class="btn primary" @onclick="SaveDates">Save</button>
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showBuild" Title="@($"Mark {_rev?.Title} as built")">
+    <ChildContent>
+        @if (_plan == null)
+        {
+            <p class="muted">Computing…</p>
+        }
+        else
+        {
+            <p>The reserved lines are taken out of the stock and switched to <em>used</em>. Check the quantities:</p>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead><tr><th>Ref</th><th class="num">Used</th><th class="num">Before</th><th class="num">After</th><th>Remark</th></tr></thead>
+                    <tbody>
+                        @foreach (var c in _plan.Changes)
+                        {
+                            <tr>
+                                <td><strong>@c.Ref</strong></td>
+                                <td class="num">@c.Consumed</td>
+                                <td class="num">@(c.QtyBefore.Length > 0 ? c.QtyBefore : "?")</td>
+                                <td class="num">@(c.QtyAfter.Length > 0 ? c.QtyAfter : "?")</td>
+                                <td class="small" style="color:var(--warn)">@c.Remark</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showBuild = false">Cancel</button>
+        <button class="btn primary" disabled="@(_plan == null || Busy)" @onclick="ApplyBuild"><Icon Name="built" /> The board is built</button>
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showBom" Title="Import a BOM" Class="wide">
+    <ChildContent>
+        @if (_bomRows == null)
+        {
+            <p class="muted">Paste the content of the board's <span class="mono">bom.csv</span> (columns <span class="mono">ref,qty,designation,value,library_ref,supplier,notes</span>) or of a KiCad BOM export, or pick the file.</p>
+            <textarea class="md-editor" rows="12" @bind="_bomCsv" placeholder="ref,qty,designation,value,library_ref,supplier,notes"></textarea>
+            <label class="btn small" style="position:relative">
+                <Icon Name="file" Size="15" /> Pick a CSV file
+                <InputFile OnChange="LoadBomFile" accept=".csv,text/csv" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+            </label>
+        }
+        else
+        {
+            @if (_bomWarnings.Count > 0)
+            {
+                <div class="notice" style="margin-bottom:10px"><Icon Name="alert" /><ul>@foreach (var w in _bomWarnings) { <li>@w</li> }</ul></div>
+            }
+            <div class="table-wrap">
+                <table class="table">
+                    <thead><tr><th></th><th>Designators</th><th class="num">Qty</th><th>BOM</th><th>Stock part</th><th>Already reserved</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in _bomRows)
+                        {
+                            <tr>
+                                <td><input type="checkbox" @bind="row.Include" disabled="@(row.PartId == null)" /></td>
+                                <td class="small">@row.Line.Designators</td>
+                                <td class="num">@row.Line.Qty</td>
+                                <td class="small">
+                                    @row.Line.Designation
+                                    <div class="muted">@row.Line.Value @row.Line.LibraryRef @(row.Line.Supplier.Length > 0 ? "· " + row.Line.Supplier : "")</div>
+                                </td>
+                                <td style="min-width:220px">
+                                    @if (row.PartId != null && !row.Picking)
+                                    {
+                                        <strong>@row.PartRef</strong>
+                                        <span class="muted small">@MatchText(row)</span>
+                                        <button class="icon-btn" title="Pick another part" @onclick="() => row.Picking = true"><Icon Name="edit" Size="14" /></button>
+                                    }
+                                    else
+                                    {
+                                        <PartPicker OnPicked="p => PickBomPart(row, p)" Placeholder="Pick the stock part…" />
+                                    }
+                                </td>
+                                <td class="small muted">@(row.Line.ExistingQty != null ? $"× {row.Line.ExistingQty} {row.Line.ExistingDesignators}" : "")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <label class="check" style="margin-top:10px"><input type="checkbox" @bind="_bomRemoveOthers" /> Also release the reserved lines that are not in this BOM</label>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showBom = false">Cancel</button>
+        @if (_bomRows == null)
+        {
+            <button class="btn primary" disabled="@(string.IsNullOrWhiteSpace(_bomCsv) || Busy)" @onclick="PreviewBom">Preview</button>
+        }
+        else
+        {
+            <button class="btn" @onclick="() => _bomRows = null">Back</button>
+            <button class="btn primary" disabled="@Busy" @onclick="ApplyBom"><Icon Name="check" /> Reserve @_bomRows.Count(r => r.Include && r.PartId != null) line(s)</button>
+        }
+    </Footer>
+</Modal>
+
+<Modal @bind-Show="_showOrder" Title="@($"Order {_order.Qty} × {_orderRef}")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Quantity</span><input class="input" type="number" min="1" @bind="_order.Qty" /></label>
+            <label class="field"><span>Supplier</span><input class="input" @bind="_order.Supplier" placeholder="AliExpress, LCSC…" /></label>
+            <label class="field"><span>Unit price</span><input class="input" type="number" step="0.0001" @bind="_order.UnitPrice" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _showOrder = false">Cancel</button>
+        <button class="btn primary" @onclick="SaveOrder"><Icon Name="cart" /> Add to the draft order</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    static readonly RevisionStatus[] Steps = [RevisionStatus.Design, RevisionStatus.PcbOrdered, RevisionStatus.PcbReceived, RevisionStatus.Built];
+
+    sealed class BomRowState
+    {
+        public required BomLineMatch Line { get; init; }
+        public int? PartId { get; set; }
+        public string? PartRef { get; set; }
+        public bool Include { get; set; }
+        public bool Picking { get; set; }
+        public bool Manual { get; set; }
+    }
+
+    RevisionDetail? _rev;
+    AllocationEdit? _adding;
+    string _addingRef = "";
+    bool _showLine, _showDates, _showBuild, _showBom, _showOrder, _bomRemoveOthers;
+    AllocationEdit _line = new();
+    string _lineRef = "";
+    RevisionEdit _dates = new();
+    BuildPlan? _plan;
+    string _bomCsv = "";
+    List<BomRowState>? _bomRows;
+    List<string> _bomWarnings = [];
+    AddToOrder _order = new();
+    string _orderRef = "";
+
+    int ReservedCount => _rev?.Lines.Count(l => l.Status == AllocationStatus.Reserved) ?? 0;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await ReloadAsync();
+        if (_rev == null) Toasts.Error("This revision no longer exists.");
+    }
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Part or ChangeScope.Order || change.Scope == ChangeScope.Project;
+
+    protected override async Task ReloadAsync() => _rev = await Api.GetRevisionAsync(Id);
+
+    string StepDate(RevisionStatus status) => Format.Date(status switch
+    {
+        RevisionStatus.PcbOrdered => _rev!.PcbOrderedAt,
+        RevisionStatus.PcbReceived => _rev!.PcbReceivedAt,
+        RevisionStatus.Built => _rev!.BuiltAt,
+        _ => null,
+    });
+
+    RevisionEdit ToEdit() => new()
+    {
+        Id = _rev!.Id, DeviceId = _rev.DeviceId, Rev = _rev.Rev, Status = _rev.Status, Notes = _rev.Notes,
+        PcbOrderedAt = _rev.PcbOrderedAt, PcbReceivedAt = _rev.PcbReceivedAt, BuiltAt = _rev.BuiltAt,
+    };
+
+    async Task SetStatus(RevisionStatus status)
+    {
+        if (_rev == null || status == _rev.Status) return;
+        if (status == RevisionStatus.Built && ReservedCount > 0)
+        {
+            await OpenBuild();
+            return;
+        }
+        var edit = ToEdit();
+        edit.Status = status;
+        await Try(async () => _rev = await Api.SaveRevisionAsync(edit));
+    }
+
+    async Task SaveDates() => await Try(async () =>
+    {
+        _rev = await Api.SaveRevisionAsync(_dates);
+        _showDates = false;
+    }, "Saved");
+
+    async Task<bool> SaveNotes(string markdown)
+    {
+        var edit = ToEdit();
+        edit.Notes = markdown;
+        return await Try(async () => _rev = await Api.SaveRevisionAsync(edit), "Notes saved");
+    }
+
+    void StartAdd(PartSummary part)
+    {
+        var existing = _rev!.Lines.FirstOrDefault(l => l.PartId == part.Id);
+        if (existing != null)
+        {
+            EditLine(existing);
+            return;
+        }
+        _adding = new AllocationEdit { RevisionId = Id, PartId = part.Id, Qty = 1 };
+        _addingRef = part.Ref;
+    }
+
+    async Task SaveAdding() => await Try(async () =>
+    {
+        _rev = await Api.SaveAllocationAsync(_adding!);
+        _adding = null;
+    }, $"{_addingRef} reserved");
+
+    void EditLine(AllocationLine line)
+    {
+        _line = new AllocationEdit { Id = line.Id, RevisionId = Id, PartId = line.PartId, Qty = line.Qty, Designators = line.Designators, Notes = line.Notes };
+        _lineRef = line.Ref;
+        _showLine = true;
+    }
+
+    async Task SaveLine() => await Try(async () =>
+    {
+        _rev = await Api.SaveAllocationAsync(_line);
+        _showLine = false;
+    });
+
+    async Task RemoveLine(AllocationLine line)
+    {
+        var what = line.Status == AllocationStatus.Used
+            ? $"Remove the used line {line.Qty} × {line.Ref}? (the stock is not changed)"
+            : $"Release {line.Qty} × {line.Ref} from this revision?";
+        if (!await Js.ConfirmAsync(what)) return;
+        await Try(async () => _rev = await Api.DeleteAllocationAsync(line.Id));
+    }
+
+    async Task OpenBuild()
+    {
+        _plan = null;
+        _showBuild = true;
+        await Try(async () => _plan = await Api.PlanBuildAsync(Id));
+    }
+
+    async Task ApplyBuild() => await Try(async () =>
+    {
+        await Api.ApplyBuildAsync(Id);
+        _showBuild = false;
+        await ReloadAsync();
+    }, "Built: stock decremented, lines switched to used");
+
+    void OpenBom()
+    {
+        _bomRows = null;
+        _bomWarnings = [];
+        _showBom = true;
+    }
+
+    async Task LoadBomFile(InputFileChangeEventArgs e)
+    {
+        using var reader = new StreamReader(e.File.OpenReadStream(2 * 1024 * 1024));
+        _bomCsv = await reader.ReadToEndAsync();
+    }
+
+    async Task PreviewBom() => await Try(async () =>
+    {
+        var preview = await Api.PreviewBomAsync(Id, _bomCsv);
+        _bomWarnings = preview.Warnings;
+        _bomRows = preview.Lines.Select(l => new BomRowState { Line = l, PartId = l.PartId, PartRef = l.PartRef, Include = l.PartId != null }).ToList();
+    });
+
+    static string MatchText(BomRowState row) => row.Manual ? "picked" : row.Line.Match switch
+    {
+        BomMatchKind.LibraryRef => "library ref",
+        BomMatchKind.Value => "by value",
+        BomMatchKind.Designation => "by designation",
+        BomMatchKind.SimilarRef => "similar ref, check it",
+        _ => "",
+    };
+
+    void PickBomPart(BomRowState row, PartSummary part)
+    {
+        row.PartId = part.Id;
+        row.PartRef = part.Ref;
+        row.Include = true;
+        row.Picking = false;
+        row.Manual = true;
+    }
+
+    async Task ApplyBom() => await Try(async () =>
+    {
+        var result = await Api.ApplyBomAsync(new BomApply
+        {
+            RevisionId = Id,
+            RemoveOthers = _bomRemoveOthers,
+            Lines = _bomRows!.Where(r => r.Include && r.PartId != null)
+                .Select(r => new BomApplyLine { PartId = r.PartId!.Value, Qty = r.Line.Qty, Designators = r.Line.Designators, Notes = r.Line.Notes })
+                .ToList(),
+        });
+        _rev = result.Revision;
+        _showBom = false;
+        Toasts.Success($"BOM applied: {result.Added} added, {result.Updated} updated, {result.Removed} removed");
+    });
+
+    void OrderLine(AllocationLine line)
+    {
+        _order = new AddToOrder { PartId = line.PartId, Qty = Math.Max(1, line.Qty) };
+        _orderRef = line.Ref;
+        _showOrder = true;
+    }
+
+    async Task SaveOrder() => await Try(async () =>
+    {
+        var order = await Api.AddToOrderAsync(_order);
+        _showOrder = false;
+        Toasts.Success($"Added to {order.Title}");
+    });
+
+    async Task Duplicate()
+    {
+        if (_rev == null) return;
+        var next = _rev.Rev is { Length: 1 } r && char.IsLetter(r[0]) ? ((char)(r[0] + 1)).ToString() : _rev.Rev + "2";
+        if (!await Js.ConfirmAsync($"Create rev {next} of {_rev.Device} with the {_rev.Lines.Count} lines of rev {_rev.Rev} (reserved)?")) return;
+        await Try(async () =>
+        {
+            var created = await Api.SaveRevisionAsync(new RevisionEdit { DeviceId = _rev.DeviceId, Rev = next });
+            foreach (var line in _rev.Lines)
+                await Api.SaveAllocationAsync(new AllocationEdit { RevisionId = created.Id, PartId = line.PartId, Qty = line.Qty, Designators = line.Designators, Notes = line.Notes });
+            Nav.NavigateTo($"revisions/{created.Id}");
+        }, $"rev {next} created");
+    }
+
+    async Task DeleteRevision()
+    {
+        if (_rev == null || !await Js.ConfirmAsync($"Delete {_rev.Title}? Its reserved parts are released and its photos go to the trash folder.")) return;
+        var projectId = _rev.ProjectId;
+        if (await Try(() => Api.DeleteRevisionAsync(Id), "Revision deleted")) Nav.NavigateTo($"projects/{projectId}");
+    }
+}

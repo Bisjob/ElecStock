@@ -1,0 +1,157 @@
+@page "/settings"
+@inherits StockComponentBase
+@inject IServiceProvider Services
+
+<PageTitle>Settings · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header"><h1>Settings</h1></div>
+
+    @if (_server != null)
+    {
+        <div class="card pad section">
+            <h2>Server</h2>
+            <p class="muted small">Address of the ElecStock server.</p>
+            <div class="row gap">
+                <input class="input" style="max-width:420px" @bind="_serverUrl" placeholder="http://my-server:4002" />
+                <button class="btn primary" disabled="@_connecting" @onclick="SaveServer">@(_connecting ? "Connecting…" : "Connect")</button>
+                @if (!_connecting)
+                {
+                    <Badge Kind="@(_info != null ? "ok" : "bad")">@(_info != null ? "Connected" : "Not connected")</Badge>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="card pad section">
+        <h2>Theme</h2>
+        <div class="chips" style="margin-top:8px">
+            @foreach (var t in new[] { "auto", "light", "dark" })
+            {
+                <button class="chip @(_theme == t ? "on" : "")" @onclick="() => SetTheme(t)">@t</button>
+            }
+        </div>
+    </div>
+
+    <div class="card pad section">
+        <h2>Claude (MCP)</h2>
+        <p class="muted small">Claude Code reads and updates the stock through the MCP endpoint of the server. Register it once for every project:</p>
+        <pre class="mono" style="white-space:pre-wrap">@McpCommand</pre>
+        <button class="btn small" @onclick="async () => await Js.CopyAsync(McpCommand)"><Icon Name="copy" Size="15" /> Copy</button>
+        @if (_info != null)
+        {
+            <p class="muted small" style="margin-bottom:0">Server @_info.Version · @_info.PartCount parts</p>
+        }
+    </div>
+
+    <div class="card pad section">
+        <h2>Export</h2>
+        <p class="muted small">A zip in the stock folder format (inventory.csv, allocations.csv, sheets, photos, datasheets) plus CSVs of the locations, projects and orders.
+            The full backup remains the database dump and the AppData volume of the server.</p>
+        <a class="btn" href="@ExternalUrl("api/export")" target="_blank"><Icon Name="download" /> Download the export</a>
+    </div>
+
+    <div class="card pad section">
+        <h2>Import</h2>
+        <p class="muted small">An export zip, or a zipped stock folder (at least <span class="mono">inventory.csv</span>; also <span class="mono">allocations.csv</span>, <span class="mono">Sheets/</span>,
+            <span class="mono">Media/</span>, <span class="mono">Datasheets/</span>; other folders are ignored).</p>
+        <label class="check"><input type="checkbox" @bind="_replace" /> Replace the current stock (the database is emptied, history included; stored files go to the trash folder)</label>
+        <div class="row gap" style="margin-top:10px">
+            <label class="btn @(_importing ? "" : "primary")" style="position:relative">
+                <Icon Name="upload" /> @(_importing ? "Importing…" : "Pick the zip")
+                <InputFile OnChange="Import" accept=".zip,application/zip" disabled="@_importing" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+            </label>
+        </div>
+        @if (_report != null)
+        {
+            <div class="notice" style="margin-top:12px">
+                <Icon Name="check" />
+                <div>
+                    <strong>Imported:</strong> @_report.Parts parts, @_report.Sheets sheets, @_report.Photos photos, @_report.FreeNotes notes, @_report.Datasheets datasheets,
+                    @_report.Locations locations, @_report.Projects projects, @_report.Revisions revisions, @_report.Allocations allocation lines.
+                    @if (_report.Warnings.Count > 0)
+                    {
+                        <ul>@foreach (var w in _report.Warnings) { <li>@w</li> }</ul>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    IServerSettings? _server;
+    string _serverUrl = "";
+    string _theme = "auto";
+    bool _replace, _importing, _connecting;
+    ImportReport? _report;
+    ServerInfo? _info;
+
+    string McpBase => _info?.PublicBaseUrl is { Length: > 0 } url ? url.TrimEnd('/') : Nav.ToAbsoluteUri(Api.ResolveUrl("/")).ToString().TrimEnd('/');
+    string McpCommand => $"claude mcp add --transport http --scope user elecstock {McpBase}/mcp";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _server = Services.GetService(typeof(IServerSettings)) as IServerSettings;
+        _serverUrl = _server?.ServerUrl ?? "";
+        try
+        {
+            _info = await Api.GetServerInfoAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
+        {
+            Toasts.Error("Server unreachable: check its address.");
+        }
+    }
+
+    protected override bool IsRelevant(ChangeEvent change) => false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _theme = await Js.GetThemeAsync();
+        StateHasChanged();
+    }
+
+    async Task SetTheme(string theme)
+    {
+        _theme = theme;
+        await Js.SetThemeAsync(theme);
+    }
+
+    async Task SaveServer()
+    {
+        await _server!.SetServerUrlAsync(_serverUrl.Trim());
+        _serverUrl = _server.ServerUrl;
+        _info = null;
+        _connecting = true;
+        try
+        {
+            _info = await Api.GetServerInfoAsync();
+            Toasts.Success($"Connected: {_info.PartCount} parts");
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error($"Server unreachable: {ex.Message}");
+        }
+        finally
+        {
+            _connecting = false;
+        }
+    }
+
+    async Task Import(InputFileChangeEventArgs e)
+    {
+        if (_replace && !await Js.ConfirmAsync("Replace the whole stock with the content of this zip? The current data (history included) is deleted.")) return;
+        _importing = true;
+        _report = null;
+        StateHasChanged();
+        await Try(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(1024L * 1024 * 1024);
+            _report = await Api.ImportAsync(stream, _replace);
+            _info = await Api.GetServerInfoAsync();
+        }, "Stock imported");
+        _importing = false;
+    }
+}

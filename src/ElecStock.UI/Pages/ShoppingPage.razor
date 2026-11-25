@@ -1,0 +1,150 @@
+@page "/shopping"
+@inherits StockComponentBase
+
+<PageTitle>Shopping · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>Shopping list</h1>
+        <div class="grow"></div>
+        <a class="btn" href="orders"><Icon Name="truck" /> Orders</a>
+    </div>
+
+    @if (_list == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        @if (_list.OpenOrders.Count > 0)
+        {
+            <div class="chips" style="margin-bottom:14px">
+                @foreach (var o in _list.OpenOrders)
+                {
+                    <a class="chip" href="@($"orders/{o.Id}")">
+                        <Badge Kind="@Format.OrderClass(o.Status)">@o.Status</Badge> @o.Title
+                        <span class="count">@o.LineCount line(s) @Format.Money(o.Total, o.Currency)</span>
+                    </a>
+                }
+            </div>
+        }
+
+        @if (_list.Items.Count == 0)
+        {
+            <EmptyState Icon="cart" Title="Nothing to buy" Text="No part is short for the reservations, planned in a draft order, or out of stock." />
+        }
+        else
+        {
+            <div class="card table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr><th></th><th>Part</th><th>Why</th><th class="num">Stock</th><th class="num">Reserved</th><th class="num">Short</th><th class="num">Ordered</th><th class="num">Planned</th><th class="num">To buy</th><th>Needed by</th><th>Last bought</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in _list.Items)
+                        {
+                            <tr>
+                                <td><PartThumb Ref="@item.Ref" Category="@item.Category" Designation="@item.Designation" ThumbUrl="@item.CoverThumbUrl" Class="xs" /></td>
+                                <td><a href="@($"stock?part={item.PartId}")"><strong>@item.Ref</strong></a><div class="muted small">@item.Designation</div></td>
+                                <td><Badge Kind="@(item.Reason == ShoppingReason.Short ? "bad" : item.Reason == ShoppingReason.Planned ? "warn" : "muted")">@Format.ReasonText(item.Reason)</Badge></td>
+                                <td class="num">@(item.Qty.Length > 0 ? item.Qty : "?")</td>
+                                <td class="num">@(item.Reserved > 0 ? item.Reserved : "")</td>
+                                <td class="num" style="color:var(--bad)">@(item.Shortage > 0 ? item.Shortage : "")</td>
+                                <td class="num" style="color:var(--order)">@(item.OnOrder > 0 ? item.OnOrder : "")</td>
+                                <td class="num">@(item.Planned > 0 ? item.Planned : "")</td>
+                                <td class="num"><strong>@(item.ToBuy > 0 ? item.ToBuy : "")</strong></td>
+                                <td class="small">@foreach (var n in item.NeededBy) { <div>@n</div> }</td>
+                                <td class="small muted">@item.LastSupplier @Format.Money(item.LastUnitPrice, item.Currency)</td>
+                                <td class="nowrap">
+                                    <button class="btn small" @onclick="() => Open(item)"><Icon Name="cart" Size="15" /> Order</button>
+                                    @if (CanRemove(item))
+                                    {
+                                        <button class="icon-btn" title="Remove from the shopping list" @onclick="() => Remove(item)"><Icon Name="trash" Size="15" /></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</div>
+
+<Modal @bind-Show="_show" Title="@($"Order {_ref}")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Quantity</span><input class="input" type="number" min="1" @bind="_request.Qty" /></label>
+            <label class="field">
+                <span>Order</span>
+                <select class="input" @bind="_orderChoice">
+                    <option value="">Draft of the supplier below (or a new draft)</option>
+                    @foreach (var o in _list?.OpenOrders ?? []) { <option value="@o.Id">@o.Title · @o.Status</option> }
+                </select>
+            </label>
+            @if (_orderChoice.Length == 0)
+            {
+                <label class="field"><span>Supplier</span><input class="input" list="suppliers" @bind="_request.Supplier" placeholder="AliExpress, LCSC…" /></label>
+                <datalist id="suppliers">@foreach (var s in Suppliers()) { <option value="@s" /> }</datalist>
+            }
+            <label class="field"><span>Unit price</span><input class="input" type="number" step="0.0001" @bind="_request.UnitPrice" /></label>
+            <label class="field span-all"><span>Listing link or remark</span><input class="input" @bind="_request.Notes" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _show = false">Cancel</button>
+        <button class="btn primary" disabled="@Busy" @onclick="Add"><Icon Name="cart" /> Add</button>
+    </Footer>
+</Modal>
+
+@code {
+    ShoppingList? _list;
+    bool _show;
+    AddToOrder _request = new();
+    string _ref = "";
+    string _orderChoice = "";
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    protected override async Task ReloadAsync() => _list = await Api.GetShoppingListAsync();
+
+    IEnumerable<string> Suppliers() =>
+        (_list?.Items.Select(i => i.LastSupplier) ?? []).Concat(_list?.OpenOrders.Select(o => o.Supplier) ?? [])
+            .Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order();
+
+    void Open(ShoppingItem item)
+    {
+        _ref = item.Ref;
+        _orderChoice = "";
+        _request = new AddToOrder
+        {
+            PartId = item.PartId,
+            Qty = Math.Max(1, item.ToBuy),
+            Supplier = item.LastSupplier,
+            UnitPrice = item.LastUnitPrice,
+        };
+        _show = true;
+    }
+
+    // A shortage for reservations is removed by releasing them in the board revision, not here.
+    static bool CanRemove(ShoppingItem item) => item.Planned > 0 || (item.Reason == ShoppingReason.OutOfStock && item.OnOrder == 0);
+
+    async Task Remove(ShoppingItem item)
+    {
+        bool noRestock = Qty.Parse(item.Qty) is { Kind: QtyKind.Exact, Value: 0 } && item.Reserved == 0 && item.OnOrder == 0;
+        var question = item.Planned > 0 ? $"Remove {item.Ref} from the draft order(s)?" : $"Stop restocking {item.Ref}?";
+        if (noRestock) question += " It leaves the shopping list until it is ordered again or a project reserves it.";
+        else if (item.Shortage > 0) question += " It stays listed while it is short for the reservations.";
+        if (!await Js.ConfirmAsync(question)) return;
+        if (await Try(() => Api.RemoveFromShoppingAsync(item.PartId), $"{item.Ref} removed")) await ReloadAsync();
+    }
+
+    async Task Add() => await Try(async () =>
+    {
+        _request.OrderId = int.TryParse(_orderChoice, out var id) ? id : null;
+        var order = await Api.AddToOrderAsync(_request);
+        _show = false;
+        Toasts.Success($"{_request.Qty} × {_ref} added to {order.Title}");
+        await ReloadAsync();
+    });
+}

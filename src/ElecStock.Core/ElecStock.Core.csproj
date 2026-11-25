@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>ElecStock</RootNamespace>
+		<Description>Stock rules, part visuals, BOM parsing and the contracts shared by the server and the clients</Description>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="ElecStock.Tests" />
+	</ItemGroup>
+
+</Project>

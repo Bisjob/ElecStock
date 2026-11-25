@@ -1,0 +1,179 @@
+@* Drawing used as a part's picture when it has no photo: resistor with its colour code, capacitor with
+   its value, TO-220 / TO-92 / DIP package with the ref, module, LED of the right colour… *@
+<svg class="glyph" viewBox="0 0 100 100" role="img" aria-label="@Ref">
+    @if (!string.IsNullOrEmpty(_tooltip))
+    {
+        <title>@_tooltip</title>
+    }
+    @switch (_kind)
+    {
+        case GlyphKind.Resistor:
+            <line x1="3" y1="50" x2="97" y2="50" class="lead" stroke-width="3" stroke-linecap="round" />
+            <defs><clipPath id="@_clipId"><rect x="22" y="37" width="56" height="26" rx="9" /></clipPath></defs>
+            <rect x="22" y="37" width="56" height="26" rx="9" fill="#D8C29D" stroke="#9C8461" stroke-width="1" />
+            <g clip-path="url(#@_clipId)">
+                @for (int i = 0; i < _bands.Count; i++)
+                {
+                    <rect x="@X(_bandX[i])" y="37" width="5" height="26" fill="@_bands[i].Color" />
+                }
+            </g>
+            break;
+        case GlyphKind.Electrolytic:
+            <line x1="42" y1="80" x2="42" y2="98" class="lead" stroke-width="3" />
+            <line x1="58" y1="80" x2="58" y2="93" class="lead" stroke-width="3" />
+            <rect x="26" y="5" width="48" height="77" rx="7" fill="#25426E" />
+            <rect x="57" y="5" width="9" height="77" fill="#9DB2D1" />
+            <path d="M59.5,20 h4 M59.5,40 h4 M59.5,60 h4" stroke="#25426E" stroke-width="1.6" />
+            <rect x="26" y="5" width="48" height="7" rx="3.5" fill="#FFFFFF" opacity="0.18" />
+            @Label(_capLabel, 41.5, 43, 27, 22, "#FFFFFF")
+            break;
+        case GlyphKind.Ceramic:
+            <line x1="44" y1="64" x2="40" y2="98" class="lead" stroke-width="3" />
+            <line x1="56" y1="64" x2="60" y2="98" class="lead" stroke-width="3" />
+            <ellipse cx="50" cy="38" rx="31" ry="32" fill="#E2A13B" stroke="#B27A20" stroke-width="1.5" />
+            @Label(_capLabel, 50, 38, 44, 22, "#4A2F05")
+            break;
+        case GlyphKind.Film:
+            <line x1="38" y1="70" x2="38" y2="98" class="lead" stroke-width="3" />
+            <line x1="62" y1="70" x2="62" y2="98" class="lead" stroke-width="3" />
+            <rect x="18" y="12" width="64" height="60" rx="6" fill="#C0392B" />
+            @Label(_capLabel, 50, 42, 48, 22, "#FFFFFF")
+            break;
+        case GlyphKind.To220:
+            <rect x="27" y="2" width="46" height="26" rx="2" fill="#B9BFC6" />
+            <circle cx="50" cy="14" r="7" class="glyph-hole" />
+            <rect x="32" y="66" width="6" height="32" fill="#C9CED4" />
+            <rect x="47" y="66" width="6" height="32" fill="#C9CED4" />
+            <rect x="62" y="66" width="6" height="32" fill="#C9CED4" />
+            <rect x="24" y="24" width="52" height="44" rx="2" fill="#26282B" />
+            @Label(Ref, 50, 45, 44, 14, "#C8CCD1")
+            break;
+        case GlyphKind.To92:
+            <line x1="38" y1="62" x2="35" y2="98" class="lead" stroke-width="3" />
+            <line x1="50" y1="62" x2="50" y2="98" class="lead" stroke-width="3" />
+            <line x1="62" y1="62" x2="65" y2="98" class="lead" stroke-width="3" />
+            <path d="M27,64 L27,34 A23,23 0 0 1 73,34 L73,64 Z" fill="#26282B" />
+            @Label(Ref, 50, 46, 40, 13, "#C8CCD1")
+            break;
+        case GlyphKind.Dip:
+            <path fill="#C9CED4" d="M11,16h13v5h-13z M11,26h13v5h-13z M11,36h13v5h-13z M11,46h13v5h-13z M11,56h13v5h-13z M11,66h13v5h-13z M11,76h13v5h-13z M76,16h13v5h-13z M76,26h13v5h-13z M76,36h13v5h-13z M76,46h13v5h-13z M76,56h13v5h-13z M76,66h13v5h-13z M76,76h13v5h-13z" />
+            <rect x="21" y="9" width="58" height="78" rx="3" fill="#26282B" />
+            <path d="M43,9 A7,7 0 0 0 57,9 Z" class="glyph-hole" />
+            <circle cx="30" cy="20" r="3" fill="#4A4D52" />
+            @Label(Ref, 50, 48, 50, 14, "#C8CCD1")
+            break;
+        case GlyphKind.Module:
+            <rect x="5" y="14" width="90" height="72" rx="5" fill="@_categoryColor" />
+            <rect x="5" y="14" width="90" height="72" rx="5" fill="#000000" opacity="0.35" />
+            <circle cx="12" cy="21" r="3" class="glyph-hole" />
+            <circle cx="88" cy="21" r="3" class="glyph-hole" />
+            <path fill="#D9B44A" d="M17,74h5v5h-5z M26,74h5v5h-5z M35,74h5v5h-5z M44,74h5v5h-5z M53,74h5v5h-5z M62,74h5v5h-5z M71,74h5v5h-5z M80,74h5v5h-5z" />
+            <rect x="33" y="28" width="34" height="32" rx="2" fill="#1C1D20" />
+            <rect x="70" y="30" width="12" height="8" rx="1" fill="#E0E0E0" opacity="0.7" />
+            <rect x="18" y="30" width="10" height="6" rx="1" fill="#E0E0E0" opacity="0.5" />
+            break;
+        case GlyphKind.Power:
+            <rect x="7" y="16" width="86" height="68" rx="6" fill="#3B4048" />
+            <path d="M15,26 h12 M15,32 h12 M15,38 h12 M73,26 h12 M73,32 h12 M73,38 h12" stroke="#2A2E34" stroke-width="3" />
+            <path d="M55,22 L33,54 L47,54 L41,79 L67,44 L53,44 L61,22 Z" fill="#F5B301" />
+            break;
+        case GlyphKind.Connector:
+            <path d="M24,62 v32 M40,62 v32 M56,62 v32 M72,62 v32" stroke="#D9B44A" stroke-width="4" />
+            <rect x="12" y="26" width="76" height="38" rx="3" fill="#EDEDED" stroke="#BDBDBD" />
+            <path fill="#5A5A5A" d="M19,36h10v13h-10z M35,36h10v13h-10z M51,36h10v13h-10z M67,36h10v13h-10z" />
+            break;
+        case GlyphKind.LedStrip:
+            <rect x="2" y="34" width="96" height="32" fill="#F2F2F2" stroke="#C9C9C9" />
+            <rect x="10" y="41" width="18" height="18" fill="#FFFDF5" stroke="#BBBBBB" />
+            <rect x="41" y="41" width="18" height="18" fill="#FFFDF5" stroke="#BBBBBB" />
+            <rect x="72" y="41" width="18" height="18" fill="#FFFDF5" stroke="#BBBBBB" />
+            <circle cx="19" cy="50" r="5" fill="#FF4D4D" />
+            <circle cx="50" cy="50" r="5" fill="#35D07F" />
+            <circle cx="81" cy="50" r="5" fill="#4D8DFF" />
+            break;
+        case GlyphKind.Fuse:
+            <rect x="18" y="38" width="64" height="24" fill="#BFE3F2" opacity="0.75" />
+            <line x1="22" y1="50" x2="78" y2="50" stroke="#6C757D" stroke-width="1.6" />
+            <rect x="6" y="35" width="16" height="30" rx="2" fill="#C9CED4" stroke="#9AA0A6" />
+            <rect x="78" y="35" width="16" height="30" rx="2" fill="#C9CED4" stroke="#9AA0A6" />
+            break;
+        case GlyphKind.Button:
+            <rect x="16" y="16" width="68" height="68" rx="8" fill="#2F3237" />
+            <circle cx="50" cy="50" r="24" fill="#C62828" stroke="#8E1B1B" stroke-width="2" />
+            <ellipse cx="45" cy="37.5" rx="10" ry="5.5" fill="#FFFFFF" opacity="0.25" />
+            break;
+        case GlyphKind.Heatsink:
+            <path fill="#A3ADB8" d="M10,70 h80 v14 h-80 z M12,14 h7 v58 h-7 z M25,14 h7 v58 h-7 z M38,14 h7 v58 h-7 z M51,14 h7 v58 h-7 z M64,14 h7 v58 h-7 z M77,14 h7 v58 h-7 z" />
+            break;
+        case GlyphKind.Led:
+            @if (_ledColor == "rgb")
+            {
+                <defs>
+                    <linearGradient id="@_clipId" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stop-color="#FF3B30" /><stop offset="0.5" stop-color="#34C759" /><stop offset="1" stop-color="#2F7BFF" />
+                    </linearGradient>
+                </defs>
+            }
+            <line x1="43" y1="66" x2="43" y2="90" class="lead" stroke-width="3" />
+            <line x1="57" y1="66" x2="57" y2="98" class="lead" stroke-width="3" />
+            <circle cx="50" cy="30" r="28" fill="@LedFill" opacity="0.22" />
+            <path d="M35,62 L35,28 A15,15 0 0 1 65,28 L65,62 Z" fill="@LedFill" opacity="0.92" />
+            <path d="M33,58 h36 v8 h-36 z" fill="@LedFill" />
+            <path d="M33,58 h36 v8 h-36 z" fill="#000000" opacity="0.25" />
+            <path d="M40,30 A10,10 0 0 1 48,20" stroke="#FFFFFF" stroke-width="3" opacity="0.55" stroke-linecap="round" fill="none" />
+            break;
+        default:
+            <rect x="14" y="14" width="72" height="72" rx="12" fill="@_categoryColor" />
+            @Label(PartVisuals.Initials(Category), 50, 50, 56, 30, "#FFFFFF", bold: true)
+            break;
+    }
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public string Ref { get; set; } = "";
+    [Parameter] public string Category { get; set; } = "";
+    [Parameter] public string Designation { get; set; } = "";
+
+    static int _counter;
+    readonly string _clipId = $"g{Interlocked.Increment(ref _counter)}";
+    GlyphKind _kind;
+    List<(string Name, string Color)> _bands = [];
+    double[] _bandX = [];
+    string _capLabel = "";
+    string _categoryColor = "#888";
+    string? _ledColor;
+    string? _tooltip;
+
+    string LedFill => _ledColor == "rgb" ? $"url(#{_clipId})" : _ledColor ?? "#FF3B30";
+
+    protected override void OnParametersSet()
+    {
+        _kind = PartVisuals.GlyphFor(Ref, Category, Designation);
+        _categoryColor = PartVisuals.CategoryColor(Category);
+        _capLabel = PartVisuals.CapacitorLabel(Ref);
+        _ledColor = PartVisuals.LedColor(Ref, Designation);
+        _bands = _kind == GlyphKind.Resistor ? PartVisuals.ResistorBands(Ref) ?? [] : [];
+        // body spans x 22..78; the tolerance band sits apart on the right
+        _bandX = _bands.Count == 4 ? [31, 40, 49, 65] : [30, 37, 44, 51, 65];
+        _tooltip = _bands.Count > 0 ? "Colour code: " + string.Join(" · ", _bands.Select(b => b.Name)) : null;
+    }
+
+    static string X(double v) => v.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Text centred on (cx, cy), shrunk to fit a box of maxWidth × maxHeight like a WPF Viewbox.</summary>
+    static RenderFragment Label(string text, double cx, double cy, double maxWidth, double maxHeight, string color, bool bold = false) => builder =>
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        double size = Math.Min(maxHeight, maxWidth / Math.Max(1, text.Length * 0.6));
+        builder.OpenElement(0, "text");
+        builder.AddAttribute(1, "x", X(cx));
+        builder.AddAttribute(2, "y", X(cy));
+        builder.AddAttribute(3, "font-size", X(Math.Round(size, 1)));
+        builder.AddAttribute(4, "fill", color);
+        builder.AddAttribute(5, "font-weight", bold ? "700" : "600");
+        builder.AddAttribute(6, "text-anchor", "middle");
+        builder.AddAttribute(7, "dominant-baseline", "central");
+        builder.AddContent(8, text);
+        builder.CloseElement();
+    };
+}

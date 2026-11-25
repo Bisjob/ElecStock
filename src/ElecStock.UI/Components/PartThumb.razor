@@ -1,0 +1,19 @@
+@inject IStockApi Api
+<div class="thumb @Class">
+    @if (!string.IsNullOrEmpty(ThumbUrl))
+    {
+        <img src="@Api.ResolveUrl(ThumbUrl)" alt="@Ref" loading="lazy" />
+    }
+    else
+    {
+        <PartGlyph Ref="@Ref" Category="@Category" Designation="@Designation" />
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Ref { get; set; } = "";
+    [Parameter] public string Category { get; set; } = "";
+    [Parameter] public string Designation { get; set; } = "";
+    [Parameter] public string? ThumbUrl { get; set; }
+    [Parameter] public string? Class { get; set; }
+}

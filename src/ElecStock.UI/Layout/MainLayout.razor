@@ -1,0 +1,101 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject UiJs Js
+@inject NavigationManager Nav
+@inject IStockEvents Events
+@inject IServiceProvider Services
+
+<div class="app">
+    <nav class="sidebar">
+        <a class="brand" href="stock">
+            <img src="_content/ElecStock.UI/icon.svg" alt="" width="28" height="28" />
+            <span>ElecStock</span>
+        </a>
+        <NavLink class="nav-item" href="stock" Match="NavLinkMatch.Prefix"><Icon Name="box" /><span>Stock</span></NavLink>
+        <NavLink class="nav-item" href="projects" Match="NavLinkMatch.Prefix"><Icon Name="folder" /><span>Projects</span></NavLink>
+        <NavLink class="nav-item" href="shopping"><Icon Name="cart" /><span>Shopping</span></NavLink>
+        <NavLink class="nav-item" href="orders" Match="NavLinkMatch.Prefix"><Icon Name="truck" /><span>Orders</span></NavLink>
+        <NavLink class="nav-item" href="locations" Match="NavLinkMatch.Prefix"><Icon Name="pin" /><span>Locations</span></NavLink>
+        <NavLink class="nav-item secondary" href="activity"><Icon Name="history" /><span>History</span></NavLink>
+        <NavLink class="nav-item secondary" href="settings"><Icon Name="settings" /><span>Settings</span></NavLink>
+        <div class="grow"></div>
+        <button class="nav-item theme" title="Theme: @_theme" @onclick="CycleTheme">
+            <Icon Name="@(_theme == "dark" ? "moon" : _theme == "light" ? "sun" : "layers")" />
+            <span>@(_theme == "auto" ? "Auto theme" : _theme == "dark" ? "Dark" : "Light")</span>
+        </button>
+    </nav>
+    <main class="content">
+        @* A page that fails to load (server down, wrong address in the app) shows this instead of killing the app:
+           the menu stays usable, so Settings can still change the server address. *@
+        <ErrorBoundary @ref="_boundary">
+            <ChildContent>@Body</ChildContent>
+            <ErrorContent Context="error">
+                @if (IsUnreachable(error))
+                {
+                    <EmptyState Icon="alert" Title="Server unreachable"
+                                Text="@($"{_server?.ServerUrl ?? "The server"} does not answer: start it, connect the VPN, or change its address.")">
+                        <div class="row gap">
+                            @if (_server != null)
+                            {
+                                <a class="btn primary" href="settings"><Icon Name="settings" /> Server address</a>
+                            }
+                            <button class="btn" @onclick="Retry"><Icon Name="refresh" /> Retry</button>
+                        </div>
+                    </EmptyState>
+                }
+                else
+                {
+                    <EmptyState Icon="alert" Title="Something went wrong" Text="@error.Message">
+                        <button class="btn" @onclick="Retry"><Icon Name="refresh" /> Retry</button>
+                    </EmptyState>
+                }
+            </ErrorContent>
+        </ErrorBoundary>
+    </main>
+</div>
+<ToastHost />
+
+@code {
+    string _theme = "auto";
+    ErrorBoundary? _boundary;
+    IServerSettings? _server;
+
+    protected override void OnInitialized()
+    {
+        _server = Services.GetService(typeof(IServerSettings)) as IServerSettings;
+        Nav.LocationChanged += OnLocationChanged;
+        Events.Changed += OnStockChanged;
+    }
+
+    // Another page gets its own chance to load.
+    void OnLocationChanged(object? sender, LocationChangedEventArgs e) => _ = InvokeAsync(Retry);
+
+    // The app's change feed connects (or reconnects) once the server answers: the page loads again by itself.
+    void OnStockChanged(ChangeEvent change) => _ = InvokeAsync(Retry);
+
+    void Retry() => _boundary?.Recover();
+
+    /// <summary>No answer at all from the server (refused, unreachable, timed out), as opposed to an error it returned.</summary>
+    static bool IsUnreachable(Exception ex) =>
+        ex is HttpRequestException { StatusCode: null } or TaskCanceledException { InnerException: TimeoutException };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _theme = await Js.GetThemeAsync();
+        await Js.SetThemeAsync(_theme);
+        StateHasChanged();
+    }
+
+    async Task CycleTheme()
+    {
+        _theme = _theme switch { "auto" => "light", "light" => "dark", _ => "auto" };
+        await Js.SetThemeAsync(_theme);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        Events.Changed -= OnStockChanged;
+    }
+}

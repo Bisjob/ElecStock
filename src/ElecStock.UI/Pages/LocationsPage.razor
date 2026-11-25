@@ -1,0 +1,106 @@
+@page "/locations"
+@inherits StockComponentBase
+
+<PageTitle>Locations · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>Locations</h1>
+        <div class="grow"></div>
+        <button class="btn" @onclick="PrintLabels"><Icon Name="printer" /> Labels @(_selected.Count > 0 ? $"({_selected.Count})" : "")</button>
+        <button class="btn primary" @onclick="() => Edit(null)"><Icon Name="plus" /> Location</button>
+    </div>
+    <p class="muted" style="margin-top:-6px">Boxes, drawers, shelves. Print their QR labels: scanning one with the phone opens the list of what is inside.</p>
+
+    @if (_locations == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (_locations.Count == 0)
+    {
+        <EmptyState Icon="pin" Title="No location yet" Text="Create one, then pick it in the details of each part." />
+    }
+    else
+    {
+        <div class="card table-wrap">
+            <table class="table">
+                <thead><tr><th style="width:32px"></th><th>Code</th><th>Name</th><th>Description</th><th class="num">Parts</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var l in _locations)
+                    {
+                        <tr>
+                            <td><input type="checkbox" checked="@_selected.Contains(l.Code)" @onchange="e => Toggle(l.Code, (bool)e.Value!)" /></td>
+                            <td><a href="@($"locations/{Uri.EscapeDataString(l.Code)}")"><strong>@l.Code</strong></a></td>
+                            <td>@l.Name</td>
+                            <td class="muted small">@l.Description</td>
+                            <td class="num">@l.PartCount</td>
+                            <td class="nowrap">
+                                <button class="icon-btn" title="Edit" @onclick="() => Edit(l)"><Icon Name="edit" Size="15" /></button>
+                                <button class="icon-btn" title="Delete" @onclick="() => Delete(l)"><Icon Name="trash" Size="15" /></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<Modal @bind-Show="_show" Title="@(_edit.Id == null ? "New location" : "Edit the location")">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="field"><span>Code (on the label)</span><input class="input" @bind="_edit.Code" @bind:event="oninput" placeholder="A3, BOX-12…" /></label>
+            <label class="field"><span>Name</span><input class="input" @bind="_edit.Name" placeholder="Drawer cabinet A, drawer 3" /></label>
+            <label class="field span-all"><span>Description</span><input class="input" @bind="_edit.Description" /></label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn" @onclick="() => _show = false">Cancel</button>
+        <button class="btn primary" disabled="@(_edit.Code.Trim().Length == 0)" @onclick="Save">Save</button>
+    </Footer>
+</Modal>
+
+@code {
+    List<LocationDto>? _locations;
+    readonly HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
+    bool _show;
+    LocationEdit _edit = new();
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Location or ChangeScope.Part;
+
+    protected override async Task ReloadAsync() => _locations = await Api.GetLocationsAsync();
+
+    void Toggle(string code, bool on)
+    {
+        if (on) _selected.Add(code);
+        else _selected.Remove(code);
+    }
+
+    void PrintLabels() =>
+        Nav.NavigateTo(_selected.Count == 0 ? "locations/labels" : "locations/labels?codes=" + Uri.EscapeDataString(string.Join(',', _selected)));
+
+    void Edit(LocationDto? l)
+    {
+        _edit = l == null ? new LocationEdit() : new LocationEdit { Id = l.Id, Code = l.Code, Name = l.Name, Description = l.Description };
+        _show = true;
+    }
+
+    async Task Save() => await Try(async () =>
+    {
+        await Api.SaveLocationAsync(_edit);
+        _show = false;
+        await ReloadAsync();
+    }, "Saved");
+
+    async Task Delete(LocationDto l)
+    {
+        if (!await Js.ConfirmAsync($"Delete the location {l.Code}?" + (l.PartCount > 0 ? $" Its {l.PartCount} part(s) are left without location." : ""))) return;
+        await Try(async () =>
+        {
+            await Api.DeleteLocationAsync(l.Id);
+            await ReloadAsync();
+        });
+    }
+}

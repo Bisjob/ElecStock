@@ -1,0 +1,73 @@
+@page "/orders"
+@inherits StockComponentBase
+
+<PageTitle>Orders · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>Orders</h1>
+        <div class="grow"></div>
+        <a class="btn" href="shopping"><Icon Name="cart" /> Shopping list</a>
+        <button class="btn primary" @onclick="Create"><Icon Name="plus" /> Order</button>
+    </div>
+
+    @if (_orders == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (_orders.Count == 0)
+    {
+        <EmptyState Icon="truck" Title="No order yet" Text="Add parts from the shopping list or a part's pane: they go to a draft order per supplier. Receiving an order adds its quantities to the stock." />
+    }
+    else
+    {
+        <div class="card table-wrap">
+            <table class="table">
+                <thead><tr><th>Supplier</th><th>Number</th><th>Status</th><th>Ordered</th><th>Expected / received</th><th class="num">Lines</th><th class="num">Total</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var o in _orders)
+                    {
+                        <tr class="clickable" @onclick='() => Nav.NavigateTo($"orders/{o.Id}")'>
+                            <td><strong>@o.Title</strong></td>
+                            <td class="muted">@o.OrderNumber</td>
+                            <td><Badge Kind="@Format.OrderClass(o.Status)">@o.Status</Badge></td>
+                            <td>@Format.Date(o.OrderedAt)</td>
+                            <td>@Format.Date(o.ReceivedAt ?? o.ExpectedAt)</td>
+                            <td class="num">@o.LineCount</td>
+                            <td class="num">@Format.Money(o.Total, o.Currency)</td>
+                            <td class="num">
+                                @* a received order stays as the history of what was bought *@
+                                @if (o.Status != OrderStatus.Received)
+                                {
+                                    <button class="icon-btn" title="Delete the order" @onclick="() => Delete(o)" @onclick:stopPropagation="true"><Icon Name="trash" Size="15" /></button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    List<OrderSummary>? _orders;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Order;
+
+    protected override async Task ReloadAsync() => _orders = await Api.GetOrdersAsync();
+
+    async Task Delete(OrderSummary o)
+    {
+        if (!await Js.ConfirmAsync($"Delete the {o.Status.ToString().ToLowerInvariant()} order {o.Title} and its {o.LineCount} line(s)?")) return;
+        if (await Try(() => Api.DeleteOrderAsync(o.Id), "Order deleted")) await ReloadAsync();
+    }
+
+    async Task Create() => await Try(async () =>
+    {
+        var order = await Api.SaveOrderAsync(new OrderEdit { Status = OrderStatus.Draft });
+        Nav.NavigateTo($"orders/{order.Id}");
+    });
+}

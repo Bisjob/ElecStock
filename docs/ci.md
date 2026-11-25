@@ -14,18 +14,18 @@ an installation is in the files: addresses, paths and keys are Actions variables
 
 ## 1. What runs
 
-`.forgejo/workflows/ci.yml`, for a push on `master`, a `v*` tag, a pull request, or by hand (*Run workflow*, on the
-branch of your choice). A push on another branch starts nothing (`on: push` lists `master` and the tags): its pull
+`.forgejo/workflows/ci.yml`, for a push on `main`, a `v*` tag, a pull request, or by hand (*Run workflow*, on the
+branch of your choice). A push on another branch starts nothing (`on: push` lists `main` and the tags): its pull
 request builds it, or run the workflow on it.
 
 | Job | What it does |
 |---|---|
 | `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a `postgres:17-alpine` service, reached as `postgres:5432` (`ELECSTOCK_TEST_DB`). |
 | `android` | Only for a tag `vX.Y.Z` (not a pre-release) and a manual run. Installs the JDK 17 (Temurin), the `maui-android` workload and the Android packages the app needs (`InstallAndroidDependencies`), then publishes `src/ElecStock.Appli` for `net10.0-android`: one APK (arm64 and x64), signed with the release key, in the `android-apk` artifact. A tag also adds it to the F-Droid repository when `FDROID_DIR` is set (§4). Nothing is cached: about 1 GB is downloaded per run. |
-| `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `master` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
+| `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `main` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
 
 - **Version**: a tag `v1.1.0` builds 1.1.0; anything else builds `<Version of Directory.Build.props>-ci.<run number>`.
-  After a release, raise that `Version` (1.0.0 → 1.0.1): otherwise `master` (`edge`) is built as `1.0.0-ci.<run>`,
+  After a release, raise that `Version` (1.0.0 → 1.0.1): otherwise `main` (`edge`) is built as `1.0.0-ci.<run>`,
   which reads as older than the 1.0.0 already released. The commit is added by the SDK (Source Link): `+<sha>` in the informational version, and on the image the labels
   `org.opencontainers.image.revision` and `.source` (`PublishRepositoryUrl=true`).
 - **Android version**: `versionName` is the version; `versionCode` is `X*10000 + Y*100 + Z` (1.1.0 → 10100), so it goes
@@ -129,7 +129,7 @@ host's Docker), which adds the APK and rebuilds and signs the index. The first t
 `ghcr.io/bisjob/elecstock-server:latest` (§7). To use the Forgejo one instead, set in the server's `.env` `REPO_URL` to
 `<registry>/<owner, lowercase>` (e.g. `forgejo.lan:3000/owner`), log in once (`docker login <registry>`, with a token
 that can read packages), then `docker compose pull && docker compose up -d`. `latest` is the last release (`vX.Y.Z`
-tag); `X.Y.Z` and `X.Y` pin one (`ELECSTOCK_TAG`); `edge` is the last commit of `master`, not released (Forgejo only).
+tag); `X.Y.Z` and `X.Y` pin one (`ELECSTOCK_TAG`); `edge` is the last commit of `main`, not released (Forgejo only).
 
 Without the CI, the README's *Quick start* section builds the same image by hand.
 

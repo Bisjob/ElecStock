@@ -1,9 +1,9 @@
 name: CI
 
-# Runs for a push on master, a version tag "vX.Y.Z", a pull request, or by hand (Run workflow); a push on another branch
+# Runs for a push on main, a version tag "vX.Y.Z", a pull request, or by hand (Run workflow); a push on another branch
 # starts nothing (its pull request builds it). Builds the server and runs the tests (the service tests on a PostgreSQL
 # service). The server image, built by the .NET SDK (container settings in ElecStock.Server.csproj, no Dockerfile), is
-# pushed to the container registry of this Forgejo for a version tag (tags "X.Y.Z", "X.Y" and "latest") and for master
+# pushed to the container registry of this Forgejo for a version tag (tags "X.Y.Z", "X.Y" and "latest") and for main
 # (tag "edge"); pull requests and manual runs only check that it builds. The Android app (MAUI) is built for a release
 # tag and signed, then added to a self-hosted F-Droid repository when the variable FDROID_DIR is set; a manual run
 # builds it too (artifact only). The public releases (ghcr.io image, APK on GitHub) come from .github/workflows/release.yml.
@@ -15,8 +15,8 @@ name: CI
 
 on:
   push:
-    # master only: a branch with a pull request is already built by the pull request.
-    branches: [master]
+    # main only: a branch with a pull request is already built by the pull request.
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -136,8 +136,8 @@ jobs:
             if [[ "$VERSION" != *-* ]]; then
               tags="$tags;${VERSION%.*};latest"
             fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH:-master}" ]]; then
-            # master (the default branch): its last commit as "edge".
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH:-main}" ]]; then
+            # main (the default branch): its last commit as "edge".
             tags="edge"
           fi
 

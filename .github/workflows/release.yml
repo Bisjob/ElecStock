@@ -1,6 +1,6 @@
 name: Release
 
-# GitHub side of the CI. Development builds (master, pull requests) and the self-hosted publishing run on Forgejo
+# GitHub side of the CI. Development builds (main, pull requests) and the self-hosted publishing run on Forgejo
 # (.forgejo/workflows/ci.yml); this repository is its mirror, and a version tag "vX.Y.Z" pushed by the mirror starts
 # this workflow:
 # - builds the server and runs the tests (the service tests on a PostgreSQL service);

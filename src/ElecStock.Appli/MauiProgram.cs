@@ -10,6 +10,12 @@ public static class MauiProgram
 {
     public static MauiApp CreateMauiApp()
     {
+#if WINDOWS
+        // Unpackaged, WebView2 keeps its data next to the exe (ElecStock.Appli.exe.WebView2): a blank window in a
+        // read-only folder such as Program Files, and data shipped with a copied folder. Keep it in the user's profile.
+        Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ElecStock", "WebView2"));
+#endif
         var builder = MauiApp.CreateBuilder();
         builder.UseMauiApp<App>();
 

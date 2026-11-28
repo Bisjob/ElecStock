@@ -6,12 +6,14 @@ name: CI
 # pushed to the container registry of this Forgejo for a version tag (tags "X.Y.Z", "X.Y" and "latest") and for main
 # (tag "edge"); pull requests and manual runs only check that it builds. The Android app (MAUI) is built for a release
 # tag and signed, then added to a self-hosted F-Droid repository when the variable FDROID_DIR is set; a manual run
-# builds it too (artifact only). The public releases (ghcr.io image, APK on GitHub) come from .github/workflows/release.yml.
+# builds it too (artifact only). The Windows app is built for the same runs, as a zip (artifact only), when the variable
+# WINDOWS_RUNNER says that a Windows runner exists. The public releases (ghcr.io image, APK on GitHub) come from .github/workflows/release.yml.
 #
 # Needs a runner labelled "ubuntu-latest" that runs its jobs in containers, the secret
 # REGISTRY_TOKEN (and, when the runner reaches Forgejo by another name than the machines pulling the image, the variable
 # REGISTRY) to publish the image, and the secrets ANDROID_KEYSTORE and ANDROID_KEYSTORE_PASSWORD to sign the app.
-# Optional: the variable FDROID_DIR (and the host's Docker socket in the jobs) to publish it on F-Droid. See docs/ci.md.
+# Optional: the variable FDROID_DIR (and the host's Docker socket in the jobs) to publish it on F-Droid; a runner
+# labelled "windows" on a Windows machine, and the variable WINDOWS_RUNNER=true, for the Windows app. See docs/ci.md.
 
 on:
   push:
@@ -333,3 +335,53 @@ jobs:
 
           docker cp -a "$APK" "$cid:/repo/repo/${APP_ID}_${VERSION_CODE}.apk"
           docker start -a "$cid"
+
+  windows:
+    name: windows app
+    needs: build-test
+    # The same runs as the android job (a release tag, a manual run), once a Windows runner exists: the variable
+    # WINDOWS_RUNNER set to "true". Without it the job is skipped, instead of waiting for a runner that never comes.
+    if: >-
+      vars.WINDOWS_RUNNER == 'true'
+      && (github.event_name == 'workflow_dispatch'
+        || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')))
+    # A forgejo-runner on Windows in host mode (label "windows:host"): a WinUI app only builds on Windows. The .NET 10
+    # SDK, the MAUI workloads, Git, Node.js and PowerShell 7 are installed on that machine once (docs/ci.md §2), not by
+    # the job: there they live in Program Files, which a job should not change.
+    runs-on: windows
+    env:
+      VERSION: ${{ needs.build-test.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tools
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet --version
+          # The project also targets Android: its restore needs maui-android next to maui-windows ("maui" has both).
+          $workloads = (dotnet workload list) -join "`n"
+          foreach ($w in 'maui-windows', 'maui-android') {
+            if ($workloads -notmatch "(?m)^\s*($w|maui)\s") {
+              Write-Output "::error::The workload $w is missing on the runner: dotnet workload install maui-windows maui-android (as administrator)."
+              exit 1
+            }
+          }
+
+      # The publish profile Windows (Properties/PublishProfiles/Windows.pubxml): a folder with .NET and the Windows App
+      # SDK inside, nothing to install on the PC. Zipped with the folder ElecStock at its root.
+      - name: Build the Windows app
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Remove-Item -Recurse -Force out -ErrorAction SilentlyContinue
+          dotnet publish src/ElecStock.Appli -f net10.0-windows10.0.19041.0 -c Release -p:PublishProfile=Windows `
+            "-p:Version=$env:VERSION" -o out/ElecStock
+          Compress-Archive out/ElecStock "out/ElecStock-$env:VERSION-win-x64.zip"
+          Get-Item out/*.zip | Format-Table Name, Length
+
+      - name: Upload the Windows app
+        uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: windows-app
+          path: out/*.zip

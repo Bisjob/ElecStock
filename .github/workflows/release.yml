@@ -8,8 +8,10 @@ name: Release
 #   linux-arm64 (tags "X.Y.Z", "X.Y" and "latest"; a pre-release such as v1.1.0-rc.1 gets its own tag only);
 # - builds the Android APK, signed with the secrets ANDROID_KEYSTORE and ANDROID_KEYSTORE_PASSWORD (the same key as
 #   the F-Droid builds, so one replaces the other);
-# - creates the GitHub release of the tag, with the APK attached.
-# A manual run (Run workflow) builds and tests everything and publishes nothing (the APK is a run artifact). See docs/ci.md.
+# - builds the Windows app (a zipped folder, .NET and the Windows App SDK inside) on a GitHub Windows runner;
+# - creates the GitHub release of the tag, with the APK and the zip attached.
+# A manual run (Run workflow) builds and tests everything and publishes nothing (the APK and the zip are run
+# artifacts). See docs/ci.md.
 
 on:
   push:
@@ -198,8 +200,40 @@ jobs:
           name: android-apk
           path: out/*.apk
 
+  windows:
+    name: windows app
+    needs: build-test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The project also targets Android: its restore needs maui-android next to maui-windows.
+      - name: Install the MAUI workloads
+        run: dotnet workload install maui-windows maui-android
+
+      # The publish profile Windows (Properties/PublishProfiles/Windows.pubxml): a folder with .NET and the Windows App
+      # SDK inside, nothing to install on the PC. Zipped with the folder ElecStock at its root.
+      - name: Build the Windows app
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.build-test.outputs.version }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet publish src/ElecStock.Appli -f net10.0-windows10.0.19041.0 -c Release -p:PublishProfile=Windows `
+            "-p:Version=$env:VERSION" -o out/ElecStock
+          Compress-Archive out/ElecStock "out/ElecStock-$env:VERSION-win-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: out/*.zip
+
   release:
-    needs: [build-test, docker, android]
+    needs: [build-test, docker, android, windows]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -208,6 +242,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: android-apk
+          path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-app
           path: out
 
       - name: Create the release
@@ -221,8 +260,10 @@ jobs:
           image="ghcr.io/${OWNER,,}/elecstock-server:$VERSION"
           printf '%s\n' \
             "**Server image** (linux-x64, linux-arm64):" "" '```' "docker pull $image" '```' "" \
-            "**Android app**: the APK below." > notes.md
+            "**Android app**: the APK below." "" \
+            "**Windows app** (x64, Windows 10 1809 or later): unzip \`ElecStock-$VERSION-win-x64.zip\` anywhere and run" \
+            "\`ElecStock\\ElecStock.Appli.exe\`, nothing to install." > notes.md
           flags=()
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" out/*.apk --verify-tag --title "ElecStock $VERSION" \
+          gh release create "$GITHUB_REF_NAME" out/*.apk out/*.zip --verify-tag --title "ElecStock $VERSION" \
             --notes-file notes.md --generate-notes "${flags[@]}"

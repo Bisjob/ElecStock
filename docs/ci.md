@@ -23,7 +23,7 @@ request builds it, or run the workflow on it.
 | `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a PostgreSQL 17 installed and started in the job (apt.postgresql.org), on `localhost:5432` (`ELECSTOCK_TEST_DB`), not on a service container (see below). |
 | `android` | Only for a tag `vX.Y.Z` (not a pre-release) and a manual run. Installs the JDK 17 (Temurin), the `maui-android` workload and the Android packages the app needs (`InstallAndroidDependencies`), then publishes `src/ElecStock.Appli` for `net10.0-android`: one APK (arm64 and x64), signed with the release key, in the `android-apk` artifact. A tag also adds it to the F-Droid repository when `FDROID_DIR` is set (§4). Nothing is cached: about 1 GB is downloaded per run. |
 | `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `main` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
-| `windows app` | Same runs as `android`, and only when the variable `WINDOWS_RUNNER` is `true` (skipped otherwise). On a Windows runner (label `windows`, §2), publishes `src/ElecStock.Appli` for `net10.0-windows10.0.19041.0` with the publish profile `Windows` (a folder with .NET and the Windows App SDK inside, nothing to install on the PC) and zips it: `ElecStock-<version>-win-x64.zip` in the `windows-app` artifact. The public zip is on the GitHub release (§7). |
+| `windows app` | **Commented out** at the end of `ci.yml` until a Windows runner exists (§2). Same runs as `android`, and only when the variable `WINDOWS_RUNNER` is `true` (skipped otherwise). On a Windows runner (label `windows`, §2), publishes `src/ElecStock.Appli` for `net10.0-windows10.0.19041.0` with the publish profile `Windows` (a folder with .NET and the Windows App SDK inside, nothing to install on the PC) and zips it: `ElecStock-<version>-win-x64.zip` in the `windows-app` artifact. The public zip is on the GitHub release (§7). |
 
 - **Version**: a tag `v1.1.0` builds 1.1.0; anything else builds `<Version of Directory.Build.props>-ci.<run number>`.
   After a release, raise that `Version` (1.0.0 → 1.0.1): otherwise `main` (`edge`) is built as `1.0.0-ci.<run>`,
@@ -68,7 +68,9 @@ the workload and the Android SDK would only save the downloads.
 
 The Windows app (WinUI) only builds on Windows: the `windows app` job asks for a runner labelled `windows`, a
 `forgejo-runner` running on a Windows machine in host mode (no containers, the job runs on the machine itself). Until
-one exists, leave the variable `WINDOWS_RUNNER` unset: the job is skipped. Otherwise a tag would leave it waiting.
+one exists, the job stays commented out at the end of `ci.yml`: even skipped by its `if`, a job asking for a label
+that no online runner has puts a warning on the workflow ("no online runner matching the label windows"). The variable
+`WINDOWS_RUNNER` keeps it skipped while the runner is not set up yet.
 
 **Where.** Your Windows PC is the simplest: the job only runs for a release tag or by hand, so the PC just has to be
 on then (a job waits in the queue until a runner takes it). For a runner that is always there, a Windows VM on the
@@ -116,7 +118,8 @@ Linux host (below).
      -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1))
    ```
    (`Start-ScheduledTask forgejo-runner` to start it now.) It should show as *Idle* in *Runners*.
-5. *Settings › Actions › Variables* › **`WINDOWS_RUNNER`** = `true`, on the repository or your user.
+5. *Settings › Actions › Variables* › **`WINDOWS_RUNNER`** = `true`, on the repository or your user, and uncomment
+   the `windows` job at the end of `.forgejo/workflows/ci.yml` (remove the leading `# ` of each line).
 
 Test it with *Actions › CI › Run workflow*: the `windows app` job should end with the `windows-app` artifact (about
 115 MB, 3 to 5 minutes once the NuGet packages are cached).

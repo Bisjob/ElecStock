@@ -10,7 +10,9 @@
         <button class="btn" @onclick="PrintLabels"><Icon Name="printer" /> Labels @(_selected.Count > 0 ? $"({_selected.Count})" : "")</button>
         <button class="btn primary" @onclick="() => Edit(null)"><Icon Name="plus" /> Location</button>
     </div>
-    <p class="muted" style="margin-top:-6px">Boxes, drawers, shelves. Print their QR labels: scanning one with the phone opens the list of what is inside.</p>
+    <p class="muted" style="margin-top:-6px">Boxes, drawers, shelves. Print their QR labels: scanning one with the phone opens the list of what is inside.
+        Codes group on their own: <span class="mono">DIO</span> holds <span class="mono">DIO-1</span>, which holds <span class="mono">DIO-1.1</span>
+        (the code of the parent, then <span class="mono">-</span> or <span class="mono">.</span>).</p>
 
     @if (_locations == null)
     {
@@ -24,16 +26,27 @@
     {
         <div class="card table-wrap">
             <table class="table">
-                <thead><tr><th style="width:32px"></th><th>Code</th><th>Name</th><th>Description</th><th class="num">Parts</th><th></th></tr></thead>
+                <thead><tr><th style="width:32px"></th><th>Code</th><th>Name</th><th>Description</th><th class="num">Parts</th><th class="num" title="Parts whose spare stock is kept here">Spare</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var l in _locations)
                     {
                         <tr>
                             <td><input type="checkbox" checked="@_selected.Contains(l.Code)" @onchange="e => Toggle(l.Code, (bool)e.Value!)" /></td>
-                            <td><a href="@($"locations/{Uri.EscapeDataString(l.Code)}")"><strong>@l.Code</strong></a></td>
+                            <td style="padding-left:@(10 + 18 * l.Depth)px">
+                                @if (l.Depth > 0) { <span class="muted">└ </span> }
+                                <a href="@($"locations/{Uri.EscapeDataString(l.Code)}")"><strong>@l.Code</strong></a>
+                            </td>
                             <td>@l.Name</td>
                             <td class="muted small">@l.Description</td>
-                            <td class="num">@l.PartCount</td>
+                            <td class="num" title="@(l.TotalPartCount != l.PartCount ? $"{l.PartCount} here, {l.TotalPartCount} with what it holds" : null)">
+                                @if (l.TotalPartCount != l.PartCount)
+                                {
+                                    <span>@l.TotalPartCount</span>
+                                    @if (l.PartCount > 0) { <span class="muted small"> (@l.PartCount here)</span> }
+                                }
+                                else { @l.PartCount }
+                            </td>
+                            <td class="num muted">@(l.SparePartCount > 0 ? l.SparePartCount : "")</td>
                             <td class="nowrap">
                                 <button class="icon-btn" title="Edit" @onclick="() => Edit(l)"><Icon Name="edit" Size="15" /></button>
                                 <button class="icon-btn" title="Delete" @onclick="() => Delete(l)"><Icon Name="trash" Size="15" /></button>
@@ -49,7 +62,7 @@
 <Modal @bind-Show="_show" Title="@(_edit.Id == null ? "New location" : "Edit the location")">
     <ChildContent>
         <div class="form-grid">
-            <label class="field"><span>Code (on the label)</span><input class="input" @bind="_edit.Code" @bind:event="oninput" placeholder="A3, BOX-12…" /></label>
+            <label class="field"><span>Code (on the label)</span><input class="input" @bind="_edit.Code" @bind:event="oninput" placeholder="A3, BOX-12, DIO-1.3…" /></label>
             <label class="field"><span>Name</span><input class="input" @bind="_edit.Name" placeholder="Drawer cabinet A, drawer 3" /></label>
             <label class="field span-all"><span>Description</span><input class="input" @bind="_edit.Description" /></label>
         </div>

@@ -37,6 +37,7 @@ public sealed class StockDb(DbContextOptions<StockDb> options) : DbContext(optio
             e.Property(p => p.KicadFootprint).HasMaxLength(300);
             e.Property(p => p.Kicad3dModel).HasMaxLength(500);
             e.HasOne(p => p.Location).WithMany(l => l.Parts).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(p => p.SpareLocation).WithMany(l => l.SpareParts).OnDelete(DeleteBehavior.SetNull);
         });
 
         b.Entity<Location>(e =>

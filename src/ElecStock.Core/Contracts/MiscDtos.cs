@@ -7,7 +7,16 @@ public sealed class LocationDto
     public string Code { get; init; } = "";
     public string Name { get; init; } = "";
     public string Description { get; init; } = "";
+    /// <summary>Parts whose main location is this one.</summary>
     public int PartCount { get; init; }
+    /// <summary>Parts stored here or in a location it holds (<see cref="Stock.LocationTree"/>).</summary>
+    public int TotalPartCount { get; init; }
+    /// <summary>Parts whose spare stock is kept here.</summary>
+    public int SparePartCount { get; init; }
+    /// <summary>The location holding this one (<c>DIO-1</c> for <c>DIO-1.3</c>), empty at the top.</summary>
+    public string ParentCode { get; init; } = "";
+    /// <summary>0 at the top, 1 inside a top location…</summary>
+    public int Depth { get; init; }
 
     public string Display => Name.Length > 0 && !Name.Equals(Code, StringComparison.OrdinalIgnoreCase) ? $"{Code} · {Name}" : Code;
 }
@@ -15,7 +24,14 @@ public sealed class LocationDto
 public sealed class LocationDetail
 {
     public LocationDto Location { get; init; } = new();
+    /// <summary>The locations holding this one, from the top down (DIO, DIO-1 for DIO-1.3).</summary>
+    public List<LocationDto> Parents { get; init; } = [];
+    /// <summary>The locations directly inside this one.</summary>
+    public List<LocationDto> Children { get; init; } = [];
+    /// <summary>Parts whose main location is this one or a location inside it, by location then part.</summary>
     public List<PartSummary> Parts { get; init; } = [];
+    /// <summary>Parts whose spare stock is kept here or in a location inside it.</summary>
+    public List<PartSummary> SpareParts { get; init; } = [];
 }
 
 public sealed class LocationEdit

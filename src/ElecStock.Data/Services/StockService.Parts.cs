@@ -103,6 +103,11 @@ public sealed partial class StockService
             throw new StockException($"'{reference}' already exists.");
         if (edit.LocationId != null && !await db.Locations.AnyAsync(l => l.Id == edit.LocationId, ct))
             throw new StockException("This location no longer exists.");
+        if (edit.SpareLocationId != null)
+        {
+            if (edit.SpareLocationId == edit.LocationId) throw new StockException("The spare location is the main location: pick another one.");
+            if (!await db.Locations.AnyAsync(l => l.Id == edit.SpareLocationId, ct)) throw new StockException("The spare location no longer exists.");
+        }
         var links = await CheckLinksAsync(db, edit, ct);
 
         Part part;
@@ -139,6 +144,11 @@ public sealed partial class StockService
         {
             changed.Add("location");
             part.LocationId = edit.LocationId;
+        }
+        if (part.SpareLocationId != edit.SpareLocationId)
+        {
+            changed.Add("spare location");
+            part.SpareLocationId = edit.SpareLocationId;
         }
         part.Qty = Clean(edit.Qty);
         part.UpdatedAt = Now;

@@ -85,7 +85,7 @@ public sealed partial class StockService(
 
     static async Task<Snapshot> LoadSnapshotAsync(StockDb db, CancellationToken ct)
     {
-        var parts = await db.Parts.AsNoTracking().Include(p => p.Location).ToListAsync(ct);
+        var parts = await db.Parts.AsNoTracking().Include(p => p.Location).Include(p => p.SpareLocation).ToListAsync(ct);
         var allocations = await db.Allocations.AsNoTracking()
             .Include(a => a.Revision).ThenInclude(r => r.Device).ThenInclude(d => d.Project)
             .ToListAsync(ct);
@@ -117,7 +117,8 @@ public sealed partial class StockService(
             .Select(a => RevisionTitle(a.Revision))
             .Distinct()
             .ToList();
-        var search = new List<string> { p.Ref, p.Designation, p.Notes, p.Category, p.Location?.Code ?? "", p.Location?.Name ?? "", p.KicadSymbol, p.KicadFootprint };
+        var search = new List<string> { p.Ref, p.Designation, p.Notes, p.Category, p.Location?.Code ?? "", p.Location?.Name ?? "",
+            p.SpareLocation?.Code ?? "", p.SpareLocation?.Name ?? "", p.KicadSymbol, p.KicadFootprint };
         search.AddRange(projects);
         search.AddRange(allocations.Select(a => a.Designators));
         search.AddRange(photos.Select(ph => ph.Caption));
@@ -138,6 +139,9 @@ public sealed partial class StockService(
             LocationId = p.LocationId,
             LocationCode = p.Location?.Code ?? "",
             LocationName = p.Location?.Name ?? "",
+            SpareLocationId = p.SpareLocationId,
+            SpareLocationCode = p.SpareLocation?.Code ?? "",
+            SpareLocationName = p.SpareLocation?.Name ?? "",
             DatasheetUrl = p.DatasheetUrl,
             HasLocalDatasheet = p.DatasheetFile != null,
             HasSheet = !string.IsNullOrWhiteSpace(p.Sheet),

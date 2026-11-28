@@ -362,12 +362,28 @@ public sealed partial class StockService
 
     // ---------- locations ----------
 
+    /// <summary>Every location in tree order (each one followed by the locations it holds), see <see cref="LocationTree"/>.</summary>
     static async Task<List<LocationDto>> LocationDtosAsync(StockDb db, CancellationToken ct)
     {
-        var list = await db.Locations.AsNoTracking()
-            .Select(l => new LocationDto { Id = l.Id, Code = l.Code, Name = l.Name, Description = l.Description, PartCount = l.Parts.Count })
+        var rows = await db.Locations.AsNoTracking()
+            .Select(l => new { l.Id, l.Code, l.Name, l.Description, Parts = l.Parts.Count, Spares = l.SpareParts.Count })
             .ToListAsync(ct);
-        return list.OrderBy(l => l.Code, Comparer<string>.Create(PartVisuals.CompareNatural)).ToList();
+        var byCode = rows.ToDictionary(r => r.Code, StringComparer.OrdinalIgnoreCase);
+        return LocationTree.Order(rows.Select(r => r.Code))
+            .Select(t =>
+            {
+                var r = byCode[t.Code];
+                return new LocationDto
+                {
+                    Id = r.Id, Code = r.Code, Name = r.Name, Description = r.Description,
+                    PartCount = r.Parts,
+                    TotalPartCount = rows.Where(o => LocationTree.IsSameOrInside(o.Code, r.Code)).Sum(o => o.Parts),
+                    SparePartCount = r.Spares,
+                    ParentCode = t.Parent ?? "",
+                    Depth = t.Depth,
+                };
+            })
+            .ToList();
     }
 
     public async Task<List<LocationDto>> GetLocationsAsync(CancellationToken ct = default)
@@ -380,15 +396,25 @@ public sealed partial class StockService
     {
         await using var db = await Db(ct);
         var trimmed = Clean(code);
-        var location = (await LocationDtosAsync(db, ct)).FirstOrDefault(l => l.Code.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+        var all = await LocationDtosAsync(db, ct);
+        var location = all.FirstOrDefault(l => l.Code.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
         if (location == null) return null;
         var s = await LoadSnapshotAsync(db, ct);
+        var natural = Comparer<string>.Create(PartVisuals.CompareNatural);
+        var tiles = Comparer<PartSummary>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category));
+        bool Here(string code) => code.Length > 0 && LocationTree.IsSameOrInside(code, location.Code);
         return new LocationDetail
         {
             Location = location,
-            Parts = s.Parts.Where(p => p.LocationId == location.Id)
+            Parents = all.Where(l => LocationTree.IsInside(location.Code, l.Code)).OrderBy(l => l.Code.Length).ToList(),
+            Children = all.Where(l => l.ParentCode.Equals(location.Code, StringComparison.OrdinalIgnoreCase)).ToList(),
+            Parts = s.Parts.Where(p => Here(p.Location?.Code ?? ""))
                 .Select(p => Summarize(p, s))
-                .OrderBy(p => p, Comparer<PartSummary>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category)))
+                .OrderBy(p => p.LocationCode, natural).ThenBy(p => p, tiles)
+                .ToList(),
+            SpareParts = s.Parts.Where(p => Here(p.SpareLocation?.Code ?? ""))
+                .Select(p => Summarize(p, s))
+                .OrderBy(p => p.SpareLocationCode, natural).ThenBy(p => p, tiles)
                 .ToList(),
         };
     }
@@ -424,11 +450,15 @@ public sealed partial class StockService
     public async Task DeleteLocationAsync(int id, CancellationToken ct = default)
     {
         await using var db = await Db(ct);
-        var location = await db.Locations.Include(l => l.Parts).FirstOrDefaultAsync(l => l.Id == id, ct)
+        var location = await db.Locations.Include(l => l.Parts).Include(l => l.SpareParts).FirstOrDefaultAsync(l => l.Id == id, ct)
             ?? throw new StockException("This location no longer exists.");
         foreach (var part in location.Parts) part.LocationId = null;
+        foreach (var part in location.SpareParts) part.SpareLocationId = null;
         db.Locations.Remove(location);
-        Log(db, ActivityKinds.LocationChanged, $"Location {location.Code} deleted" + (location.Parts.Count > 0 ? $" ({location.Parts.Count} part(s) left without location)" : ""));
+        var left = new List<string>();
+        if (location.Parts.Count > 0) left.Add($"{location.Parts.Count} part(s) left without location");
+        if (location.SpareParts.Count > 0) left.Add($"{location.SpareParts.Count} part(s) left without spare location");
+        Log(db, ActivityKinds.LocationChanged, $"Location {location.Code} deleted" + (left.Count > 0 ? $" ({string.Join(", ", left)})" : ""));
         await db.SaveChangesAsync(ct);
         Notify(ChangeScope.All);
     }

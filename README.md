@@ -26,6 +26,8 @@ by Claude through MCP.
 - **Shopping list and orders**: what is short for the reservations, planned in drafts or out of stock; one
   draft order per supplier; receiving an order adds the quantities to the stock (`10+` + 10 = `20+`).
 - **Locations**: boxes and drawers with printable QR labels; scanning one with the phone opens its content.
+  Codes group on their own (`DIO` holds `DIO-1`, which holds `DIO-1.1`), and a part can keep the rest of its
+  stock in a spare location.
 - **History**: every change with its source (Web, App, Claude, Import) and the quantity before / after.
 - **Live updates**: a change made anywhere shows at once in every open browser and app.
 - **KiCad**: each part links to its symbol, footprint and 3D model; the custom ones are stored on the server

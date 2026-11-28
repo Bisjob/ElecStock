@@ -23,6 +23,10 @@ public sealed class PartSummary
     public int? LocationId { get; init; }
     public string LocationCode { get; init; } = "";
     public string LocationName { get; init; } = "";
+    /// <summary>Where the rest of the stock is kept when the main location is full (a spare drawer).</summary>
+    public int? SpareLocationId { get; init; }
+    public string SpareLocationCode { get; init; } = "";
+    public string SpareLocationName { get; init; } = "";
     public string DatasheetUrl { get; init; } = "";
     public bool HasLocalDatasheet { get; init; }
     public bool HasSheet { get; init; }
@@ -48,6 +52,7 @@ public sealed class PartSummary
     [JsonIgnore] public string AvailableLong => StockMath.AvailableLong(ParsedQty, Reserved);
     [JsonIgnore] public string StatusTitle => StockMath.StatusTitle(Status, Reserved);
     [JsonIgnore] public string LocationDisplay => LocationName.Length > 0 ? LocationName : LocationCode;
+    [JsonIgnore] public string SpareLocationDisplay => SpareLocationName.Length > 0 ? SpareLocationName : SpareLocationCode;
     [JsonIgnore] public bool NeedsBuying => Status == StockStatus.Short || (ParsedQty.Kind == QtyKind.Exact && ParsedQty.Value == 0) || Planned > 0;
 }
 
@@ -109,6 +114,8 @@ public sealed class PartEdit
     public string Designation { get; set; } = "";
     public string Qty { get; set; } = "";
     public int? LocationId { get; set; }
+    /// <summary>Second place holding the rest of the stock (spare drawer); never the main location.</summary>
+    public int? SpareLocationId { get; set; }
     public string DatasheetUrl { get; set; } = "";
     public string Notes { get; set; } = "";
     public string KicadSymbol { get; set; } = "";
@@ -121,7 +128,7 @@ public sealed class PartEdit
     public static PartEdit From(PartSummary p) => new()
     {
         Id = p.Id, Ref = p.Ref, Category = p.Category, Designation = p.Designation, Qty = p.Qty,
-        LocationId = p.LocationId, DatasheetUrl = p.DatasheetUrl, Notes = p.Notes,
+        LocationId = p.LocationId, SpareLocationId = p.SpareLocationId, DatasheetUrl = p.DatasheetUrl, Notes = p.Notes,
         KicadSymbol = p.KicadSymbol, KicadFootprint = p.KicadFootprint, Kicad3dModel = p.Kicad3dModel,
     };
 }

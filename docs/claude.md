@@ -45,6 +45,8 @@ ElecStock server and is used through its MCP tools (`elecstock` server).
   stock part, take its links; when you find or make the right symbol/footprint, record it with
   `update_part` (a custom one is uploaded to the library first). Symbols and footprints are made or fixed
   with KiCad / Copperpour, never edited as text.
+- Locations group by code: `DIO` holds `DIO-1`, which holds `DIO-1.1`. A part has one main location and may
+  have a spare location (`update_part` with `spareLocation`) for the rest of its stock; the quantity stays one total.
 - Every change made through MCP is in the history as "Claude" (`get_history`).
 ```
 
@@ -64,4 +66,5 @@ ElecStock server and is used through its MCP tools (`elecstock` server).
 | `add_part`, `update_part`, `update_sheet`, `update_free_notes`, `fetch_datasheet` | edit the stock (KiCad links included) |
 | `get_kicad_library` | the stock KiCad library: items, parts using them, download links, sync and upload commands ([kicad.md](kicad.md)) |
 | `get_shopping_list`, `add_to_order`, `list_orders`, `get_order`, `receive_order` | buying |
-| `list_locations`, `get_history` | storage locations, change history |
+| `list_locations`, `get_location` | storage locations as a tree (`DIO` holds `DIO-1`, which holds `DIO-1.1`); what one location and everything inside it holds, spare stock included |
+| `get_history` | change history |

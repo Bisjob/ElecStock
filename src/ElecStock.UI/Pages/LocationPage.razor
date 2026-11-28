@@ -4,7 +4,15 @@
 <PageTitle>@Code · ElecStock</PageTitle>
 
 <div class="page">
-    <div class="breadcrumb"><a href="locations">Locations</a> <Icon Name="right" Size="14" /> <span>@Code</span></div>
+    <div class="breadcrumb">
+        <a href="locations">Locations</a>
+        @foreach (var parent in _detail?.Parents ?? [])
+        {
+            <Icon Name="right" Size="14" />
+            <a href="@Href(parent.Code)">@parent.Code</a>
+        }
+        <Icon Name="right" Size="14" /> <span>@Code</span>
+    </div>
     @if (_loaded && _detail == null)
     {
         <EmptyState Icon="pin" Title="@($"No location {Code}")" Text="It may have been renamed or deleted." />
@@ -26,27 +34,71 @@
             <p class="muted" style="margin-top:-6px">@l.Description</p>
         }
 
+        @if (_detail.Children.Count > 0)
+        {
+            <div class="chips" style="margin-bottom:14px">
+                @foreach (var child in _detail.Children)
+                {
+                    <a class="chip" href="@Href(child.Code)" title="@child.Description" style="text-decoration:none">
+                        <Icon Name="pin" Size="12" /> @child.Display <span class="count">@child.TotalPartCount</span>
+                    </a>
+                }
+            </div>
+        }
+
         <div class="row gap" style="margin-bottom:14px">
-            <PartPicker OnPicked="Assign" Placeholder="Put a part here: search the stock…" />
+            <PartPicker OnPicked="Assign" Placeholder="@(_asSpare ? "Keep a part's spare stock here: search the stock…" : "Put a part here: search the stock…")" />
+            <select class="input" style="width:auto" @bind="_asSpare" title="Main location of the part, or where the rest of its stock is kept">
+                <option value="false">as its location</option>
+                <option value="true">as its spare</option>
+            </select>
         </div>
 
-        @if (_detail.Parts.Count == 0)
+        @if (_detail.Parts.Count == 0 && _detail.SpareParts.Count == 0)
         {
             <EmptyState Icon="box" Title="Empty" Text="No part is stored here yet." />
         }
         else
         {
-            <div class="tiles">
-                @foreach (var part in _detail.Parts)
+            @* Grouped by location when this one holds others (DIO → DIO-1.1, DIO-1.2…). *@
+            var groups = _detail.Parts.GroupBy(p => p.LocationCode, StringComparer.OrdinalIgnoreCase).ToList();
+            bool grouped = groups.Count > 1 || (groups.Count == 1 && !groups[0].Key.Equals(l.Code, StringComparison.OrdinalIgnoreCase));
+            foreach (var group in groups)
+            {
+                if (grouped)
                 {
-                    <a class="tile" href="@($"stock?part={part.Id}")" title="@part.AvailableLong" style="text-decoration:none">
-                        <PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" />
-                        <span class="tile-ref">@part.Ref</span>
-                        <span class="tile-des">@part.Designation</span>
-                        <span class="tile-foot"><Badge Kind="@Format.StatusClass(part.Status)">@part.AvailableShort</Badge></span>
-                    </a>
+                    <div class="group-title">
+                        <a href="@Href(group.Key)"><Icon Name="pin" Size="13" /> @group.Key</a>
+                        @if (group.First().LocationName is { Length: > 0 } name && name != group.Key)
+                        {
+                            <span class="muted small">@name</span>
+                        }
+                        <span class="count">@group.Count()</span>
+                    </div>
                 }
-            </div>
+                <div class="tiles">
+                    @foreach (var part in group)
+                    {
+                        @Tile(part, part.SpareLocationCode.Length > 0 ? $"spare: {part.SpareLocationCode}" : null)
+                    }
+                </div>
+            }
+
+            if (_detail.SpareParts.Count > 0)
+            {
+                <div class="group-title">
+                    <Icon Name="box" Size="13" /> Spare stock kept here
+                    <span class="count">@_detail.SpareParts.Count</span>
+                </div>
+                <p class="muted small" style="margin-top:-4px">The rest of the stock of these parts: their main location is on each tile.</p>
+                <div class="tiles">
+                    @foreach (var part in _detail.SpareParts)
+                    {
+                        var where = part.LocationCode.Length > 0 ? $"main: {part.LocationCode}" : "no main location";
+                        @Tile(part, grouped || !part.SpareLocationCode.Equals(l.Code, StringComparison.OrdinalIgnoreCase) ? $"{where} · in {part.SpareLocationCode}" : where)
+                    }
+                </div>
+            }
         }
     }
 </div>
@@ -56,6 +108,7 @@
 
     LocationDetail? _detail;
     bool _loaded;
+    bool _asSpare;
 
     protected override async Task OnParametersSetAsync() => await ReloadAsync();
 
@@ -67,11 +120,33 @@
         _loaded = true;
     }
 
+    static string Href(string code) => $"locations/{Uri.EscapeDataString(code)}";
+
+    RenderFragment Tile(PartSummary part, string? where) =>
+        @<a class="tile" href="@($"stock?part={part.Id}")" title="@part.AvailableLong" style="text-decoration:none">
+            <PartThumb Ref="@part.Ref" Category="@part.Category" Designation="@part.Designation" ThumbUrl="@part.CoverThumbUrl" />
+            <span class="tile-ref">@part.Ref</span>
+            <span class="tile-des">@part.Designation</span>
+            <span class="tile-foot">
+                <Badge Kind="@Format.StatusClass(part.Status)">@part.AvailableShort</Badge>
+                @if (where != null) { <span class="muted small">@where</span> }
+            </span>
+        </a>;
+
     async Task Assign(PartSummary part) => await Try(async () =>
     {
         var edit = PartEdit.From(part);
-        edit.LocationId = _detail!.Location.Id;
+        if (_asSpare)
+        {
+            edit.SpareLocationId = _detail!.Location.Id;
+            if (edit.LocationId == edit.SpareLocationId) edit.LocationId = null;
+        }
+        else
+        {
+            edit.LocationId = _detail!.Location.Id;
+            if (edit.SpareLocationId == edit.LocationId) edit.SpareLocationId = null;
+        }
         await Api.SavePartAsync(edit);
         await ReloadAsync();
-    }, $"{part.Ref} is now in {Code}");
+    }, _asSpare ? $"{part.Ref}: spare stock now in {Code}" : $"{part.Ref} is now in {Code}");
 }

@@ -48,6 +48,17 @@ public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStor
 
         // ---------- locations and parts ----------
         var locations = new Dictionary<string, Location>(StringComparer.OrdinalIgnoreCase);
+        Location? LocationOf(string text)
+        {
+            if (text.Length == 0) return null;
+            if (!locations.TryGetValue(text, out var location))
+            {
+                location = new Location { Code = LocationCode(text, locations.Values), Name = text };
+                locations[text] = location;
+                db.Locations.Add(location);
+            }
+            return location;
+        }
         var parts = new Dictionary<string, Part>(StringComparer.OrdinalIgnoreCase);
         var sheetColumn = new Dictionary<Part, string>();
         foreach (var row in CsvText.ParseRecords(inventoryText))
@@ -73,17 +84,9 @@ public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStor
                 CreatedAt = now,
                 UpdatedAt = now,
             };
-            var locationText = row.GetValueOrDefault("location", "");
-            if (locationText.Length > 0)
-            {
-                if (!locations.TryGetValue(locationText, out var location))
-                {
-                    location = new Location { Code = LocationCode(locationText, locations.Values), Name = locationText };
-                    locations[locationText] = location;
-                    db.Locations.Add(location);
-                }
-                part.Location = location;
-            }
+            part.Location = LocationOf(row.GetValueOrDefault("location", ""));
+            part.SpareLocation = LocationOf(row.GetValueOrDefault("spare_location", ""));
+            if (part.SpareLocation == part.Location) part.SpareLocation = null;
             if (row.GetValueOrDefault("sheet", "") is { Length: > 0 } sheet) sheetColumn[part] = sheet;
             parts[reference] = part;
             db.Parts.Add(part);

@@ -28,15 +28,16 @@ public sealed class StockExporter(IDbContextFactory<StockDb> dbFactory, FileStor
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
         using (var zip = new ZipArchive(temp, ZipArchiveMode.Create, leaveOpen: true))
         {
-            var parts = (await db.Parts.AsNoTracking().Include(p => p.Location).Include(p => p.Photos).ToListAsync(ct))
+            var parts = (await db.Parts.AsNoTracking().Include(p => p.Location).Include(p => p.SpareLocation).Include(p => p.Photos).ToListAsync(ct))
                 .OrderBy(p => p, Comparer<Entities.Part>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category)))
                 .ToList();
 
             Text(zip, "inventory.csv", CsvText.Write(
-                ["ref", "category", "designation", "qty", "location", "sheet", "datasheet_url", "notes", "kicad_symbol", "kicad_footprint", "kicad_3d_model"],
+                ["ref", "category", "designation", "qty", "location", "spare_location", "sheet", "datasheet_url", "notes", "kicad_symbol", "kicad_footprint", "kicad_3d_model"],
                 parts.Select(p => new[]
                 {
                     p.Ref, p.Category, p.Designation, p.Qty, p.Location?.Name is { Length: > 0 } n ? n : p.Location?.Code ?? "",
+                    p.SpareLocation?.Name is { Length: > 0 } sn ? sn : p.SpareLocation?.Code ?? "",
                     p.Sheet != null ? $"Sheets/{p.Ref}.md" : "", p.DatasheetUrl, p.Notes, p.KicadSymbol, p.KicadFootprint, p.Kicad3dModel,
                 })));
 

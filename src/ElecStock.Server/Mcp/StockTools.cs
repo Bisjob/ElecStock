@@ -39,6 +39,9 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
           (get_kicad_library), synced on every PC to ${ELEC_STOCK}/KiCad. When a design uses a stock part, take its links.
           When you find or make the right symbol/footprint for a part, record it (update_part with kicadSymbol /
           kicadFootprint); a custom one is uploaded to the library first (get_kicad_library explains how).
+        - Locations group by code: DIO holds DIO-1, which holds DIO-1.1 (a code starting with another one followed by - or .).
+          A part has one main location and may have a spare location holding the rest of its stock (a spare drawer);
+          the quantity stays one total. get_location lists what a location and everything inside it holds.
         """;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -74,6 +77,10 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         await stock.GetPartByRefAsync(reference)
         ?? throw new McpException($"No part '{reference}' in the stock (search_parts finds similar refs).");
 
+    /// <summary>"DIO-4 (Spare)": the code to pass back to the tools, with the name when there is one.</summary>
+    static string? Place(string code, string name) =>
+        code.Length == 0 ? null : name.Length > 0 && !name.Equals(code, StringComparison.OrdinalIgnoreCase) ? $"{code} ({name})" : code;
+
     static object Brief(PartSummary p) => new
     {
         @ref = p.Ref,
@@ -82,7 +89,8 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         qty = p.Qty.Length > 0 ? p.Qty : null,
         available = p.AvailableShort,
         status = p.StatusTitle,
-        location = p.LocationDisplay.Length > 0 ? p.LocationDisplay : null,
+        location = Place(p.LocationCode, p.LocationName),
+        spareLocation = Place(p.SpareLocationCode, p.SpareLocationName),
         notes = p.Notes.Length > 0 ? p.Notes : null,
         onOrder = p.OnOrder > 0 ? p.OnOrder : (int?)null,
         projects = p.Projects.Count > 0 ? p.Projects : null,
@@ -135,7 +143,8 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
             qty = p.Qty.Length > 0 ? p.Qty : "(not counted)",
             availability = p.AvailableLong,
             status = p.StatusTitle,
-            location = p.LocationDisplay.Length > 0 ? p.LocationDisplay : null,
+            location = Place(p.LocationCode, p.LocationName),
+            spareLocation = Place(p.SpareLocationCode, p.SpareLocationName),
             datasheetUrl = p.DatasheetUrl.Length > 0 ? p.DatasheetUrl : null,
             offlineDatasheet = p.HasLocalDatasheet,
             notes = p.Notes.Length > 0 ? p.Notes : null,
@@ -525,6 +534,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         [Description("Human-readable description.")] string designation,
         [Description("Quantity: a number, '10+' for at least 10, empty when not counted.")] string qty = "",
         [Description("Location code (created when unknown).")] string? location = null,
+        [Description(SpareLocationHelp)] string? spareLocation = null,
         [Description("Datasheet link.")] string? datasheetUrl = null,
         [Description("Facts about the part (never project usage).")] string? notes = null,
         [Description(KicadSymbolHelp)] string? kicadSymbol = null,
@@ -534,7 +544,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         var saved = await stock.SavePartAsync(new PartEdit
         {
             Ref = reference, Category = category, Designation = designation, Qty = qty,
-            LocationId = await LocationId(location), DatasheetUrl = datasheetUrl ?? "", Notes = notes ?? "",
+            LocationId = await LocationId(location), SpareLocationId = await LocationId(spareLocation), DatasheetUrl = datasheetUrl ?? "", Notes = notes ?? "",
             KicadSymbol = kicadSymbol ?? "", KicadFootprint = kicadFootprint ?? "", Kicad3dModel = kicad3dModel ?? "",
         });
         return Out(Brief(saved.Part));
@@ -550,6 +560,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         [Description("New quantity: a number, '10+', or empty string for not counted.")] string? qty = null,
         [Description("Why the quantity changes (count, found more…).")] string? qtyReason = null,
         [Description("Location code (created when unknown); empty string removes it.")] string? location = null,
+        [Description(SpareLocationHelp + " Empty string removes it.")] string? spareLocation = null,
         string? datasheetUrl = null,
         [Description("Facts about the part, replaces the current notes.")] string? notes = null,
         [Description(KicadSymbolHelp + " Empty string removes it.")] string? kicadSymbol = null,
@@ -564,6 +575,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         edit.Qty = qty ?? p.Qty;
         edit.QtyReason = qtyReason ?? "via Claude";
         if (location != null) edit.LocationId = await LocationId(location);
+        if (spareLocation != null) edit.SpareLocationId = await LocationId(spareLocation);
         edit.DatasheetUrl = datasheetUrl ?? p.DatasheetUrl;
         edit.Notes = notes ?? p.Notes;
         edit.KicadSymbol = kicadSymbol ?? p.KicadSymbol;
@@ -577,6 +589,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         });
     });
 
+    const string SpareLocationHelp = "Spare location code (created when unknown): where the rest of the stock is kept when the main location is full.";
     const string KicadSymbolHelp = "KiCad symbol as Library:Name, e.g. Device:R, MCU_Espressif:ESP32-C3, or Stock:<name> for the stock library.";
     const string KicadFootprintHelp = "KiCad footprint as Library:Name, e.g. Resistor_SMD:R_0603_1608Metric, or Stock:<name>.";
     const string Kicad3dModelHelp = "3D model path, only when the footprint has none or the wrong one, e.g. ${ELEC_STOCK}/KiCad/3D/<file>.step.";
@@ -727,9 +740,40 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
 
     // ---------- misc ----------
 
-    [McpServerTool(Name = "list_locations", ReadOnly = true), Description("Storage locations (boxes, drawers) and how many parts each holds.")]
+    [McpServerTool(Name = "list_locations", ReadOnly = true), Description(
+        "Storage locations (modules, drawers, compartments) in tree order: parent (DIO holds DIO-1, which holds DIO-1.1), "
+        + "parts stored there, parts in it and everything inside it, parts whose spare stock is there.")]
     public Task<string> ListLocations() => Run(async () =>
-        Out((await stock.GetLocationsAsync()).Select(l => new { l.Code, name = l.Name.Length > 0 ? l.Name : null, parts = l.PartCount })));
+        Out((await stock.GetLocationsAsync()).Select(l => new
+        {
+            l.Code,
+            name = l.Name.Length > 0 ? l.Name : null,
+            parent = l.ParentCode.Length > 0 ? l.ParentCode : null,
+            parts = l.PartCount,
+            totalParts = l.TotalPartCount != l.PartCount ? l.TotalPartCount : (int?)null,
+            spareParts = l.SparePartCount > 0 ? l.SparePartCount : (int?)null,
+        })));
+
+    [McpServerTool(Name = "get_location", ReadOnly = true), Description(
+        "What one location holds, with everything inside it (DIO gives DIO-1, DIO-1.1…): parts by location, then the "
+        + "parts whose spare stock is there.")]
+    public Task<string> GetLocation([Description("Location code, e.g. DIO or DIO-1.3.")] string code) => Run(async () =>
+    {
+        var d = await stock.GetLocationAsync(code)
+            ?? throw new McpException($"No location '{code}' (list_locations gives them all).");
+        return Out(new
+        {
+            d.Location.Code,
+            name = d.Location.Name.Length > 0 ? d.Location.Name : null,
+            description = d.Location.Description.Length > 0 ? d.Location.Description : null,
+            parents = d.Parents.Count > 0 ? d.Parents.Select(l => l.Code) : null,
+            inside = d.Children.Count > 0 ? d.Children.Select(l => l.Name.Length > 0 ? $"{l.Code} ({l.Name})" : l.Code) : null,
+            parts = d.Parts.GroupBy(p => p.LocationCode).Select(g => new { location = g.Key, parts = g.Select(Brief) }),
+            spare = d.SpareParts.Count > 0
+                ? d.SpareParts.GroupBy(p => p.SpareLocationCode).Select(g => new { location = g.Key, parts = g.Select(Brief) })
+                : null,
+        });
+    });
 
     [McpServerTool(Name = "get_history", ReadOnly = true), Description(
         "History of the changes (who: Web, App, Mcp = Claude, Import), for one part or the whole stock.")]

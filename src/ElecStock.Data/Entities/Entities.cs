@@ -12,6 +12,9 @@ public sealed class Part
     public string Qty { get; set; } = "";
     public int? LocationId { get; set; }
     public Location? Location { get; set; }
+    /// <summary>Where the rest of the stock is kept when the main location is full (a spare drawer).</summary>
+    public int? SpareLocationId { get; set; }
+    public Location? SpareLocation { get; set; }
     public string DatasheetUrl { get; set; } = "";
     /// <summary>One-line facts about the part, never project usage.</summary>
     public string Notes { get; set; } = "";
@@ -44,6 +47,7 @@ public sealed class Location
     public string Name { get; set; } = "";
     public string Description { get; set; } = "";
     public List<Part> Parts { get; set; } = [];
+    public List<Part> SpareParts { get; set; } = [];
 }
 
 public sealed class Project

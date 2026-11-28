@@ -136,3 +136,37 @@ public class BomTests
         Assert.Equal(kind, how);
     }
 }
+
+public class LocationTreeTests
+{
+    [Theory]
+    [InlineData("DIO-1.3", "DIO", true)]
+    [InlineData("DIO-1.3", "DIO-1", true)]
+    [InlineData("dio-1.3", "DIO-1", true)]
+    [InlineData("DIO-1", "DIO-1", false)]
+    [InlineData("DIO-10", "DIO-1", false)]
+    [InlineData("DIODE", "DIO", false)]
+    [InlineData("A3", "A", false)]
+    [InlineData("DIO-", "DIO", false)]
+    public void IsInside(string code, string ancestor, bool inside) =>
+        Assert.Equal(inside, LocationTree.IsInside(code, ancestor));
+
+    [Fact]
+    public void ParentIsTheClosestExistingLocation()
+    {
+        string[] codes = ["DIO", "DIO-1", "DIO-1.3", "RES"];
+        Assert.Equal("DIO-1", LocationTree.ParentCode("DIO-1.3", codes));
+        Assert.Equal("DIO", LocationTree.ParentCode("DIO-2.1", codes));
+        Assert.Null(LocationTree.ParentCode("DIO", codes));
+        Assert.Null(LocationTree.ParentCode("CAP-1", codes));
+    }
+
+    [Fact]
+    public void OrderPutsEachLocationUnderItsParent()
+    {
+        var order = LocationTree.Order(["DIO-10", "RES", "DIO-1.2", "DIO", "DIO-2", "DIO-1", "DIO-1.10", "A3"]);
+        Assert.Equal(["A3", "DIO", "DIO-1", "DIO-1.2", "DIO-1.10", "DIO-2", "DIO-10", "RES"], order.Select(o => o.Code));
+        Assert.Equal([0, 0, 1, 2, 2, 1, 1, 0], order.Select(o => o.Depth));
+        Assert.Equal("DIO-1", order.Single(o => o.Code == "DIO-1.10").Parent);
+    }
+}

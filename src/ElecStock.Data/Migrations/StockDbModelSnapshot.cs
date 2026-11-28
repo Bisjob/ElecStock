@@ -398,6 +398,9 @@ namespace ElecStock.Data.Migrations
                     b.Property<string>("Sheet")
                         .HasColumnType("text");
 
+                    b.Property<int?>("SpareLocationId")
+                        .HasColumnType("integer");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -407,6 +410,8 @@ namespace ElecStock.Data.Migrations
 
                     b.HasIndex("Ref")
                         .IsUnique();
+
+                    b.HasIndex("SpareLocationId");
 
                     b.ToTable("Parts");
                 });
@@ -621,7 +626,14 @@ namespace ElecStock.Data.Migrations
                         .HasForeignKey("LocationId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("ElecStock.Data.Entities.Location", "SpareLocation")
+                        .WithMany("SpareParts")
+                        .HasForeignKey("SpareLocationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Location");
+
+                    b.Navigation("SpareLocation");
                 });
 
             modelBuilder.Entity("ElecStock.Data.Entities.Photo", b =>
@@ -695,6 +707,8 @@ namespace ElecStock.Data.Migrations
             modelBuilder.Entity("ElecStock.Data.Entities.Location", b =>
                 {
                     b.Navigation("Parts");
+
+                    b.Navigation("SpareParts");
                 });
 
             modelBuilder.Entity("ElecStock.Data.Entities.Order", b =>

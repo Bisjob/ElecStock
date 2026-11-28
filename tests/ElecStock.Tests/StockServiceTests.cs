@@ -378,4 +378,48 @@ public sealed class StockServiceTests : IAsyncLifetime
         var ex = await Assert.ThrowsAsync<StockException>(() => _stock.DeleteKicadItemAsync(model.Id));
         Assert.Contains("used by the footprint", ex.Message);
     }
+
+    [Fact]
+    public async Task Locations_group_by_code_and_hold_spare_stock()
+    {
+        var module = await _stock.SaveLocationAsync(new LocationEdit { Code = "DIO", Name = "Diodes" });
+        var drawer = await _stock.SaveLocationAsync(new LocationEdit { Code = "DIO-1" });
+        var compartment = await _stock.SaveLocationAsync(new LocationEdit { Code = "DIO-1.5" });
+        var spare = await _stock.SaveLocationAsync(new LocationEdit { Code = "DIO-4" });
+        var other = await _stock.SaveLocationAsync(new LocationEdit { Code = "DIODE" });
+
+        var part = await AddPart("1N4007", "80");
+        var edit = PartEdit.From(part.Part);
+        edit.LocationId = compartment.Id;
+        edit.SpareLocationId = compartment.Id;
+        Assert.Contains("main location", (await Assert.ThrowsAsync<StockException>(() => _stock.SavePartAsync(edit))).Message);
+        edit.SpareLocationId = spare.Id;
+        var saved = (await _stock.SavePartAsync(edit)).Part;
+        Assert.Equal("DIO-1.5", saved.LocationCode);
+        Assert.Equal("DIO-4", saved.SpareLocationCode);
+        Assert.Contains("dio-4", saved.SearchText);
+        Assert.Contains("spare location", (await _stock.GetPartAsync(saved.Id))!.History[0].Summary);
+        await _stock.SavePartAsync(new PartEdit { Ref = "1N5819", Category = "diode", Designation = "Schottky", Qty = "30", LocationId = other.Id });
+
+        var locations = await _stock.GetLocationsAsync();
+        Assert.Equal(["DIO", "DIO-1", "DIO-1.5", "DIO-4", "DIODE"], locations.Select(l => l.Code));
+        var dio = locations.Single(l => l.Code == "DIO");
+        Assert.Equal((0, 1, 0), (dio.PartCount, dio.TotalPartCount, dio.Depth));
+        Assert.Equal(("DIO-1", 2), (locations.Single(l => l.Code == "DIO-1.5").ParentCode, locations.Single(l => l.Code == "DIO-1.5").Depth));
+        Assert.Equal(1, locations.Single(l => l.Code == "DIO-4").SparePartCount);
+        Assert.Equal("", locations.Single(l => l.Code == "DIODE").ParentCode);
+
+        var detail = (await _stock.GetLocationAsync("dio"))!;
+        Assert.Equal(["DIO-1", "DIO-4"], detail.Children.Select(l => l.Code));
+        Assert.Equal(["1N4007"], detail.Parts.Select(p => p.Ref));
+        Assert.Equal(["1N4007"], detail.SpareParts.Select(p => p.Ref));
+        var inner = (await _stock.GetLocationAsync("DIO-1.5"))!;
+        Assert.Equal(["DIO", "DIO-1"], inner.Parents.Select(l => l.Code));
+        Assert.Empty(inner.SpareParts);
+
+        await _stock.DeleteLocationAsync(spare.Id);
+        var after = (await _stock.GetPartAsync(saved.Id))!.Part;
+        Assert.Equal(("DIO-1.5", (int?)null), (after.LocationCode, after.SpareLocationId));
+        Assert.Equal(module.Id, (await _stock.GetLocationAsync("DIO"))!.Location.Id);
+    }
 }

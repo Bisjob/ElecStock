@@ -114,7 +114,7 @@
                                         <td class="muted">@PartVisuals.CategoryTitle(part.Category)</td>
                                         <td class="num">@StockMath.QtyDisplay(part.ParsedQty)</td>
                                         <td><Badge Kind="@Format.StatusClass(part.Status)" Title="@part.AvailableLong">@part.AvailableShort</Badge></td>
-                                        <td class="muted">@part.LocationDisplay</td>
+                                        <td class="muted">@part.LocationDisplay@(part.SpareLocationDisplay.Length > 0 ? $" + {part.SpareLocationDisplay}" : "")</td>
                                         <td class="muted small">@string.Join(", ", part.Projects)</td>
                                     </tr>
                                 }

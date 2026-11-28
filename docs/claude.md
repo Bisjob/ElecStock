@@ -40,6 +40,11 @@ ElecStock server and is used through its MCP tools (`elecstock` server).
   Links).
 - Part notes hold facts about the part, never project usage. A sheet's "Used in" section is plain text
   (e.g. `WeatherStation / Sensor-Board`).
+- KiCad: `get_part` gives the symbol, footprint and 3D model of a part. `Stock:` links are in the stock
+  KiCad library (`get_kicad_library`), synced to `${ELEC_STOCK}/KiCad` on every PC. When a design uses a
+  stock part, take its links; when you find or make the right symbol/footprint, record it with
+  `update_part` (a custom one is uploaded to the library first). Symbols and footprints are made or fixed
+  with KiCad / Copperpour, never edited as text.
 - Every change made through MCP is in the history as "Claude" (`get_history`).
 ```
 
@@ -48,7 +53,7 @@ ElecStock server and is used through its MCP tools (`elecstock` server).
 | Tool | Does |
 |---|---|
 | `search_parts` | search (words in ref, designation, notes, location, projects, designators, photo captions), category and status filters |
-| `get_part` | everything about a part: availability, sheet, free notes, photo captions and markers, project lines, orders, history |
+| `get_part` | everything about a part: availability, KiCad links (and stock library files), sheet, free notes, photo captions and markers, project lines, orders, history |
 | `get_part_photos` | the photos as images, with captions and marker positions |
 | `check_availability` | whether the stock covers a list of `{ref, qty}` |
 | `list_projects`, `get_revision` | projects → devices → revisions, lines with their stock state |
@@ -56,6 +61,7 @@ ElecStock server and is used through its MCP tools (`elecstock` server).
 | `reserve_parts`, `release_parts` | allocation lines of a revision (upsert / remove) |
 | `import_bom` | match a `bom.csv` against the stock, preview or reserve |
 | `plan_build`, `mark_built` | preview / decrement the stock for a built board |
-| `add_part`, `update_part`, `update_sheet`, `update_free_notes`, `fetch_datasheet` | edit the stock |
+| `add_part`, `update_part`, `update_sheet`, `update_free_notes`, `fetch_datasheet` | edit the stock (KiCad links included) |
+| `get_kicad_library` | the stock KiCad library: items, parts using them, download links, sync and upload commands ([kicad.md](kicad.md)) |
 | `get_shopping_list`, `add_to_order`, `list_orders`, `get_order`, `receive_order` | buying |
 | `list_locations`, `get_history` | storage locations, change history |

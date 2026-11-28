@@ -28,8 +28,10 @@ by Claude through MCP.
 - **Locations**: boxes and drawers with printable QR labels; scanning one with the phone opens its content.
 - **History**: every change with its source (Web, App, Claude, Import) and the quantity before / after.
 - **Live updates**: a change made anywhere shows at once in every open browser and app.
-- **Export / import**: the whole stock as a zip of CSV files, Markdown sheets, photos and datasheets.
-- **MCP**: 25 tools for Claude (search, part with sheet and photos, availability, projects, reservations,
+- **KiCad**: each part links to its symbol, footprint and 3D model; the custom ones are stored on the server
+  as the `Stock` library and synced to every PC with one PowerShell line, see [docs/kicad.md](docs/kicad.md).
+- **Export / import**: the whole stock as a zip of CSV files, Markdown sheets, photos, datasheets and the KiCad library.
+- **MCP**: 26 tools for Claude (search, part with sheet and photos, availability, projects, reservations,
   BOM import, build, shopping, orders…), see [docs/claude.md](docs/claude.md).
 
 > **No authentication.** ElecStock is meant for a trusted home network (reach it from outside through a
@@ -105,16 +107,16 @@ curl -X POST "http://localhost:5190/api/import?replace=true" -H "Content-Type: a
 ```
 ElecStock-App/
 ├── src/
-│   ├── ElecStock.Core/     ← stock rules (qty, availability), part drawings, BOM parsing, contracts (DTOs, IStockApi)
+│   ├── ElecStock.Core/     ← stock rules (qty, availability), part drawings, BOM parsing, KiCad files, contracts (DTOs, IStockApi)
 │   ├── ElecStock.Data/     ← PostgreSQL (EF Core), file storage, StockService, import / export
 │   ├── ElecStock.UI/       ← Blazor pages shared by the web server and the MAUI app
-│   ├── ElecStock.Server/   ← ASP.NET Core: web UI, HTTP API (/api), SignalR (/hubs/stock), MCP (/mcp), container image
+│   ├── ElecStock.Server/   ← ASP.NET Core: web UI, HTTP API (/api), KiCad library (/kicad), SignalR (/hubs/stock), MCP (/mcp), container image
 │   └── ElecStock.Appli/    ← MAUI Blazor Hybrid client (Windows, Android)
 ├── tests/ElecStock.Tests/  ← rules, drawings, BOM matching, and service scenarios on a real PostgreSQL
 ├── postgres-compose/       ← dev database
 ├── docker-compose.yml      ← deployment
 ├── .forgejo/workflows/     ← CI on Forgejo Actions (docs/ci.md)
-└── docs/                   ← CI, Claude / MCP
+└── docs/                   ← CI, Claude / MCP, KiCad library
 ```
 
 One `IStockApi`, two implementations: the web host uses `StockService` in-process (Blazor Server),
@@ -129,7 +131,7 @@ to every open client (circuits directly, MAUI apps through SignalR).
 | Key | Default | |
 |---|---|---|
 | `ConnectionStrings:Stock` | dev database on 5433 | PostgreSQL |
-| `Storage:Root` | `AppData` | photos, thumbnails, datasheets, trash (relative to the app folder) |
+| `Storage:Root` | `AppData` | photos, thumbnails, datasheets, KiCad files, trash (relative to the app folder) |
 | `Storage:MaxPhotoSide` | `2400` | photos larger than this are shrunk on upload |
 | `Server:PublicBaseUrl` | (page address) | address of the web UI from the phone, used by the QR labels |
 | `Database:MigrateOnStartup` | `true` | |

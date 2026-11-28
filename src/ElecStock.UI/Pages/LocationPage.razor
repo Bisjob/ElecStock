@@ -69,11 +69,9 @@
 
     async Task Assign(PartSummary part) => await Try(async () =>
     {
-        await Api.SavePartAsync(new PartEdit
-        {
-            Id = part.Id, Ref = part.Ref, Category = part.Category, Designation = part.Designation, Qty = part.Qty,
-            DatasheetUrl = part.DatasheetUrl, Notes = part.Notes, LocationId = _detail!.Location.Id,
-        });
+        var edit = PartEdit.From(part);
+        edit.LocationId = _detail!.Location.Id;
+        await Api.SavePartAsync(edit);
         await ReloadAsync();
     }, $"{part.Ref} is now in {Code}");
 }

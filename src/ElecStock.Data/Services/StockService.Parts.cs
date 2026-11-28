@@ -103,6 +103,7 @@ public sealed partial class StockService
             throw new StockException($"'{reference}' already exists.");
         if (edit.LocationId != null && !await db.Locations.AnyAsync(l => l.Id == edit.LocationId, ct))
             throw new StockException("This location no longer exists.");
+        var links = await CheckLinksAsync(db, edit, ct);
 
         Part part;
         if (edit.Id == null)
@@ -131,6 +132,9 @@ public sealed partial class StockService
         Set("designation", part.Designation, Clean(edit.Designation), v => part.Designation = v);
         Set("datasheet link", part.DatasheetUrl, Clean(edit.DatasheetUrl), v => part.DatasheetUrl = v);
         Set("notes", part.Notes, Clean(edit.Notes), v => part.Notes = v);
+        Set("KiCad symbol", part.KicadSymbol, links.Symbol, v => part.KicadSymbol = v);
+        Set("KiCad footprint", part.KicadFootprint, links.Footprint, v => part.KicadFootprint = v);
+        Set("3D model", part.Kicad3dModel, links.Model, v => part.Kicad3dModel = v);
         if (part.LocationId != edit.LocationId)
         {
             changed.Add("location");

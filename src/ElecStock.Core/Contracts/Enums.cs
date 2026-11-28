@@ -28,7 +28,11 @@ public enum ActivitySource { Web, App, Mcp, Import, System }
 public enum PhotoOwner { Part, Project, Revision }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ChangeScope>))]
-public enum ChangeScope { All, Part, Project, Order, Location }
+public enum ChangeScope { All, Part, Project, Order, Location, Kicad }
+
+/// <summary>What an item of the stock KiCad library is.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<KicadItemKind>))]
+public enum KicadItemKind { Symbol, Footprint, Model }
 
 /// <summary>Why a part is on the shopping list.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ShoppingReason>))]

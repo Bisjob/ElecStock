@@ -117,7 +117,7 @@ public sealed partial class StockService(
             .Select(a => RevisionTitle(a.Revision))
             .Distinct()
             .ToList();
-        var search = new List<string> { p.Ref, p.Designation, p.Notes, p.Category, p.Location?.Code ?? "", p.Location?.Name ?? "" };
+        var search = new List<string> { p.Ref, p.Designation, p.Notes, p.Category, p.Location?.Code ?? "", p.Location?.Name ?? "", p.KicadSymbol, p.KicadFootprint };
         search.AddRange(projects);
         search.AddRange(allocations.Select(a => a.Designators));
         search.AddRange(photos.Select(ph => ph.Caption));
@@ -145,6 +145,9 @@ public sealed partial class StockService(
             Notes = p.Notes,
             PhotoCount = photos.Count,
             CoverThumbUrl = Cover(photos) is { } cover ? ThumbUrl(cover) : null,
+            KicadSymbol = p.KicadSymbol,
+            KicadFootprint = p.KicadFootprint,
+            Kicad3dModel = p.Kicad3dModel,
             Projects = projects,
             SearchText = string.Join(' ', search.Where(t => t.Length > 0)).ToLowerInvariant(),
             UpdatedAt = p.UpdatedAt,

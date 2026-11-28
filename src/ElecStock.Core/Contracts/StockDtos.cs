@@ -31,6 +31,12 @@ public sealed class PartSummary
     public string Notes { get; init; } = "";
     public int PhotoCount { get; init; }
     public string? CoverThumbUrl { get; init; }
+    /// <summary>KiCad symbol (<c>Device:R</c>, <c>Stock:…</c>), empty when unknown.</summary>
+    public string KicadSymbol { get; init; } = "";
+    /// <summary>KiCad footprint (<c>Resistor_SMD:R_0603_1608Metric</c>, <c>Stock:…</c>), empty when unknown.</summary>
+    public string KicadFootprint { get; init; } = "";
+    /// <summary>3D model path when the footprint has none, empty otherwise.</summary>
+    public string Kicad3dModel { get; init; } = "";
     /// <summary>"WeatherStation · Sensor-Board rev A" for every revision that has a line on this part.</summary>
     public List<string> Projects { get; init; } = [];
     /// <summary>Lower-case text searched by the stock filter: projects, designators, photo captions and markers.</summary>
@@ -105,8 +111,19 @@ public sealed class PartEdit
     public int? LocationId { get; set; }
     public string DatasheetUrl { get; set; } = "";
     public string Notes { get; set; } = "";
+    public string KicadSymbol { get; set; } = "";
+    public string KicadFootprint { get; set; } = "";
+    public string Kicad3dModel { get; set; } = "";
     /// <summary>Why the quantity changed (count, found more…): kept in the history.</summary>
     public string? QtyReason { get; set; }
+
+    /// <summary>An edit of the part as it is: change what needs changing, the rest is kept.</summary>
+    public static PartEdit From(PartSummary p) => new()
+    {
+        Id = p.Id, Ref = p.Ref, Category = p.Category, Designation = p.Designation, Qty = p.Qty,
+        LocationId = p.LocationId, DatasheetUrl = p.DatasheetUrl, Notes = p.Notes,
+        KicadSymbol = p.KicadSymbol, KicadFootprint = p.KicadFootprint, Kicad3dModel = p.Kicad3dModel,
+    };
 }
 
 public sealed class PhotoDto

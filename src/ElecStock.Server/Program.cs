@@ -7,6 +7,7 @@ using ElecStock.Server.Api;
 using ElecStock.Server.Components;
 using ElecStock.Server.Mcp;
 using ElecStock.UI;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 
@@ -21,6 +22,7 @@ builder.Services.AddSignalR();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddStockUI();
 builder.Services.AddProblemDetails();
+builder.Services.AddHttpContextAccessor();
 builder.Services
     .AddMcpServer(options =>
     {
@@ -48,12 +50,19 @@ app.MapStaticAssets();
 
 // Stored files have GUID names: they never change, so they can be cached for good.
 var store = app.Services.GetRequiredService<FileStore>();
+var contentTypes = new FileExtensionContentTypeProvider();
+contentTypes.Mappings[".kicad_sym"] = "text/plain; charset=utf-8";
+contentTypes.Mappings[".kicad_mod"] = "text/plain; charset=utf-8";
+contentTypes.Mappings[".step"] = "model/step";
+contentTypes.Mappings[".stp"] = "model/step";
+contentTypes.Mappings[".wrl"] = "model/vrml";
 foreach (var dir in FileStore.ServedDirs)
 {
     app.UseStaticFiles(new StaticFileOptions
     {
         FileProvider = new PhysicalFileProvider(Path.Combine(store.Root, dir)),
         RequestPath = $"/files/{dir}",
+        ContentTypeProvider = contentTypes,
         OnPrepareResponse = ctx =>
         {
             ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
@@ -67,6 +76,7 @@ foreach (var dir in FileStore.ServedDirs)
 app.UseAntiforgery();
 
 app.MapStockApi();
+app.MapKicadLibrary();
 app.MapHub<StockHub>(StockHub.Path);
 
 // Changes made by Claude are written to the history as "Mcp".

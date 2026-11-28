@@ -27,6 +27,7 @@ public sealed class StockServiceTests : IAsyncLifetime
     readonly List<ChangeEvent> _changes = [];
     StockService _stock = null!;
     CallerContext _caller = null!;
+    KicadLibrary _kicad = null!;
 
     sealed class Factory(DbContextOptions<StockDb> options) : IDbContextFactory<StockDb>
     {
@@ -78,6 +79,7 @@ public sealed class StockServiceTests : IAsyncLifetime
         _stock = new StockService(factory, _caller, new Notifier(_changes), files, images,
             new StockImporter(factory, files, images, TimeProvider.System), new Http(),
             Options.Create(new ServerOptions()), TimeProvider.System);
+        _kicad = new KicadLibrary(factory, files);
     }
 
     public ValueTask DisposeAsync()
@@ -252,5 +254,128 @@ public sealed class StockServiceTests : IAsyncLifetime
         Assert.Contains(history, h => h.Kind == ActivityKinds.QtyChanged && h.Summary.Contains("(counted)") && h.QtyAfter == "12");
         Assert.Contains(history, h => h.Kind == ActivityKinds.PartUpdated && h.Summary.Contains("category"));
         Assert.Contains(_changes, c => c.Scope == ChangeScope.Part && c.Id == part.Part.Id);
+    }
+
+    // ---------- KiCad library ----------
+
+    static MemoryStream Text(string text) => new(System.Text.Encoding.UTF8.GetBytes(text));
+
+    [Fact]
+    public async Task An_upload_for_a_part_fills_its_empty_links()
+    {
+        var part = await AddPart("INA226-Module", "3");
+        var result = await _stock.UploadKicadFileAsync("Stock.kicad_sym", Text(KicadFilesTests.SymbolLib), part.Part.Id);
+        Assert.Equal(["INA226-Module", "INA226-Module-v2"], result.Added.Select(i => i.Name));
+        Assert.Empty(result.Linked); // two symbols: which one is ambiguous
+
+        result = await _stock.UploadKicadFileAsync("fp.kicad_mod", Text(KicadFilesTests.Footprint), part.Part.Id, "github.com/mrtnvgr/KiCad_ESP32-C3-SuperMini");
+        Assert.Equal(["footprint Stock:ESP32-C3-SuperMini"], result.Linked);
+        Assert.Equal("github.com/mrtnvgr/KiCad_ESP32-C3-SuperMini", result.Added.Single().Source);
+
+        var detail = (await _stock.GetPartAsync(part.Part.Id))!;
+        Assert.Equal("Stock:ESP32-C3-SuperMini", detail.Part.KicadFootprint);
+        Assert.Contains(detail.History, h => h.Kind == ActivityKinds.KicadChanged && h.Summary.Contains("linked"));
+        Assert.Contains(_changes, c => c.Scope == ChangeScope.Kicad);
+
+        // Same name again: replaced, not duplicated.
+        result = await _stock.UploadKicadFileAsync("again.kicad_mod", Text(KicadFilesTests.Footprint));
+        Assert.Single(result.Replaced);
+        var library = await _stock.GetKicadLibraryAsync();
+        Assert.Equal(3, library.Items.Count);
+        var footprint = library.Items.Single(i => i.Kind == KicadItemKind.Footprint);
+        Assert.Equal(["INA226-Module"], footprint.UsedBy);
+        Assert.Empty(footprint.MissingModels); // its model paths are outside the stock library
+    }
+
+    [Fact]
+    public async Task Stock_links_must_exist_and_get_the_library_case()
+    {
+        var part = await AddPart("ESP32-C3-SuperMini", "2");
+        var edit = PartEdit.From(part.Part);
+        edit.KicadFootprint = "Stock:ESP32-C3-SuperMini";
+        var ex = await Assert.ThrowsAsync<StockException>(() => _stock.SavePartAsync(edit));
+        Assert.Contains("upload it first", ex.Message);
+
+        await _stock.UploadKicadFileAsync("fp.kicad_mod", Text(KicadFilesTests.Footprint));
+        edit.KicadFootprint = "stock:esp32-c3-supermini";
+        edit.KicadSymbol = "MCU_Espressif:ESP32-C3";
+        var saved = await _stock.SavePartAsync(edit);
+        Assert.Equal(("MCU_Espressif:ESP32-C3", "Stock:ESP32-C3-SuperMini"), (saved.Part.KicadSymbol, saved.Part.KicadFootprint));
+
+        edit = PartEdit.From(saved.Part);
+        edit.KicadSymbol = "ESP32-C3";
+        ex = await Assert.ThrowsAsync<StockException>(() => _stock.SavePartAsync(edit));
+        Assert.Contains("Library:Name", ex.Message);
+
+        // A quantity change keeps the links.
+        edit = PartEdit.From(saved.Part);
+        edit.Qty = "5";
+        saved = await _stock.SavePartAsync(edit);
+        Assert.Equal("Stock:ESP32-C3-SuperMini", saved.Part.KicadFootprint);
+    }
+
+    [Fact]
+    public async Task Linked_items_cannot_be_removed()
+    {
+        var part = await AddPart("INA226-Module", "3");
+        await _stock.UploadKicadFileAsync("Stock.kicad_sym", Text(KicadFilesTests.SymbolLib));
+        var edit = PartEdit.From(part.Part);
+        edit.KicadSymbol = "Stock:INA226-Module";
+        await _stock.SavePartAsync(edit);
+
+        var items = (await _stock.GetKicadLibraryAsync()).Items;
+        var parent = items.Single(i => i.Name == "INA226-Module");
+        var ex = await Assert.ThrowsAsync<StockException>(() => _stock.DeleteKicadItemAsync(parent.Id));
+        Assert.Contains("INA226-Module", ex.Message);
+
+        edit.KicadSymbol = "";
+        edit.Id = part.Part.Id;
+        await _stock.SavePartAsync(edit);
+        ex = await Assert.ThrowsAsync<StockException>(() => _stock.DeleteKicadItemAsync(parent.Id));
+        Assert.Contains("extended by INA226-Module-v2", ex.Message);
+
+        await _stock.DeleteKicadItemAsync(items.Single(i => i.Name == "INA226-Module-v2").Id);
+        await _stock.DeleteKicadItemAsync(parent.Id);
+        Assert.Empty((await _stock.GetKicadLibraryAsync()).Items);
+    }
+
+    [Fact]
+    public async Task A_derived_symbol_needs_its_parent()
+    {
+        var derivedOnly = KicadFilesTests.SymbolLib[..KicadFilesTests.SymbolLib.IndexOf("\t(symbol \"INA226-Module\"", StringComparison.Ordinal)]
+            + KicadFilesTests.SymbolLib[KicadFilesTests.SymbolLib.IndexOf("\t(symbol \"INA226-Module-v2\"", StringComparison.Ordinal)..];
+        var ex = await Assert.ThrowsAsync<StockException>(() => _stock.UploadKicadFileAsync("v2.kicad_sym", Text(derivedOnly)));
+        Assert.Contains("extends 'INA226-Module'", ex.Message);
+    }
+
+    [Fact]
+    public async Task The_library_zip_has_the_stock_layout_with_models_linked()
+    {
+        await _stock.UploadKicadFileAsync("Stock.kicad_sym", Text(KicadFilesTests.SymbolLib));
+        await _stock.UploadKicadFileAsync("fp.kicad_mod", Text(KicadFilesTests.Footprint));
+        await _stock.UploadKicadFileAsync("ESP32-C3-SuperMini.step", Text("ISO-10303-21;\nHEADER;\n"));
+
+        using var buffer = new MemoryStream();
+        var version = await _kicad.WriteZipAsync(buffer, CancellationToken.None);
+        Assert.Equal(version, await _kicad.VersionAsync(CancellationToken.None));
+        Assert.Equal(version, (await _stock.GetKicadLibraryAsync()).Version);
+
+        buffer.Position = 0;
+        using var zip = new System.IO.Compression.ZipArchive(buffer);
+        string Read(string path)
+        {
+            using var reader = new StreamReader(zip.GetEntry(path)!.Open());
+            return reader.ReadToEnd();
+        }
+        Assert.Equal(["KiCad/3D/ESP32-C3-SuperMini.step", "KiCad/README.md", "KiCad/Stock.kicad_sym", "KiCad/Stock.pretty/ESP32-C3-SuperMini.kicad_mod", KicadLibrary.ManifestFile],
+            zip.Entries.Select(e => e.FullName).Order(StringComparer.Ordinal));
+        Assert.Equal(2, ElecStock.Kicad.KicadFiles.ReadSymbols(Read("KiCad/Stock.kicad_sym")).Count);
+        Assert.Equal("${ELEC_STOCK}/KiCad/3D/ESP32-C3-SuperMini.step", ElecStock.Kicad.KicadFiles.Models(Read("KiCad/Stock.pretty/ESP32-C3-SuperMini.kicad_mod"))[0]);
+        Assert.Contains(version, Read(KicadLibrary.ManifestFile));
+
+        // The model is used by the footprint: it stays.
+        var model = (await _stock.GetKicadLibraryAsync()).Items.Single(i => i.Kind == KicadItemKind.Model);
+        var ex = await Assert.ThrowsAsync<StockException>(() => _stock.DeleteKicadItemAsync(model.Id));
+        Assert.Contains("used by the footprint", ex.Message);
     }
 }

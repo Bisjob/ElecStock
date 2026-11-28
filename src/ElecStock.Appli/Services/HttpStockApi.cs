@@ -135,6 +135,20 @@ public sealed class HttpStockApi(ServerConnection server) : IStockApi
     public Task FetchDatasheetAsync(int partId, CancellationToken ct = default) => Send(HttpMethod.Post, $"api/parts/{partId}/datasheet/fetch", null, ct);
     public Task DeleteDatasheetAsync(int partId, CancellationToken ct = default) => Send(HttpMethod.Delete, $"api/parts/{partId}/datasheet", null, ct);
 
+    // ---------- KiCad library ----------
+
+    public Task<KicadLibraryDto> GetKicadLibraryAsync(CancellationToken ct = default) => Get<KicadLibraryDto>("api/kicad", ct);
+
+    public async Task<KicadUploadResult> UploadKicadFileAsync(string fileName, Stream content, int? partId = null, string? source = null, CancellationToken ct = default)
+    {
+        var url = $"api/kicad/upload?fileName={Q(fileName)}" + (partId != null ? $"&partId={partId}" : "") + (source != null ? $"&source={Q(source)}" : "");
+        using var response = await Upload(url, content, "application/octet-stream", ct);
+        return (await response.Content.ReadFromJsonAsync<KicadUploadResult>(Json, ct))!;
+    }
+
+    public Task<KicadItemDto> UpdateKicadItemAsync(int id, KicadItemEdit edit, CancellationToken ct = default) => Put<KicadItemDto>($"api/kicad/{id}", edit, ct);
+    public Task DeleteKicadItemAsync(int id, CancellationToken ct = default) => Send(HttpMethod.Delete, $"api/kicad/{id}", null, ct);
+
     // ---------- projects ----------
 
     public Task<List<ProjectSummary>> GetProjectsAsync(CancellationToken ct = default) => Get<List<ProjectSummary>>("api/projects", ct);

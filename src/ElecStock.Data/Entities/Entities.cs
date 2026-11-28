@@ -23,6 +23,12 @@ public sealed class Part
     public string? DatasheetFile { get; set; }
     /// <summary>Out of stock and not to buy again: kept off the shopping list until it is ordered again (a reservation still shows it).</summary>
     public bool NoRestock { get; set; }
+    /// <summary>KiCad symbol, <c>Device:R</c> or <c>Stock:ESP32-C3-SuperMini</c>; empty when unknown.</summary>
+    public string KicadSymbol { get; set; } = "";
+    /// <summary>KiCad footprint, <c>Resistor_SMD:R_0603_1608Metric</c> or <c>Stock:…</c>; empty when unknown.</summary>
+    public string KicadFootprint { get; set; } = "";
+    /// <summary>3D model path, only when the footprint has none: <c>${ELEC_STOCK}/KiCad/3D/…step</c>.</summary>
+    public string Kicad3dModel { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -166,6 +172,24 @@ public sealed class Marker
     public double X { get; set; }
     public double Y { get; set; }
     public string Label { get; set; } = "";
+}
+
+/// <summary>One file of the stock KiCad library: a symbol (kept as a one-symbol library), a footprint or a 3D model.</summary>
+public sealed class KicadItem
+{
+    public int Id { get; set; }
+    public KicadItemKind Kind { get; set; }
+    /// <summary>Symbol or footprint name, or the model file name with its extension; unique per kind.</summary>
+    public required string Name { get; set; }
+    /// <summary>Storage path of the file (<c>cad/…</c>).</summary>
+    public required string StoragePath { get; set; }
+    public long Size { get; set; }
+    /// <summary>For a derived symbol, the symbol it extends.</summary>
+    public string? Extends { get; set; }
+    /// <summary>Where it comes from: a link, "drawn from the datasheet", "made with FreeCAD"…</summary>
+    public string Source { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }
 
 /// <summary>History of the changes: who (web, app, Claude), what, and the quantity before/after.</summary>

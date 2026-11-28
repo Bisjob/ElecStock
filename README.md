@@ -70,7 +70,8 @@ works too, even when Docker creates it.
 ## Apps
 
 - **Browser**: the web UI works on desktop and phone (camera upload, QR labels).
-- **Windows**: a MAUI Blazor Hybrid app with the same pages, talking to the server over its HTTP API.
+- **Windows**: a MAUI Blazor Hybrid app with the same pages, talking to the server over its HTTP API. The zip
+  attached to each [GitHub release](../../releases): unzip it anywhere and run `ElecStock\ElecStock.Appli.exe`.
 - **Android**: the same app, the APK attached to each [GitHub release](../../releases); the server address
   is set in *Settings*.
 

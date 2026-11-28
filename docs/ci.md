@@ -4,9 +4,9 @@ Two workflows, one per forge. The repository lives on a self-hosted Forgejo, wit
 
 - **Forgejo Actions**, `.forgejo/workflows/ci.yml` (§1–6): the development pipeline. Build and tests of every push and
   pull request, the server image in the Forgejo registry (`edge`, releases), the Android app on a self-hosted F-Droid
-  repository (optional).
+  repository (optional), the Windows app as a zip (optional, needs a Windows runner).
 - **GitHub Actions**, `.github/workflows/release.yml` (§7): the public releases, on a version tag pushed by the mirror.
-  Tests, the multi-arch image on ghcr.io, the signed APK, the GitHub release.
+  Tests, the multi-arch image on ghcr.io, the signed APK, the Windows zip, the GitHub release.
 
 Each forge only reads its own folder: GitHub ignores `.forgejo/`, and Forgejo ignores `.github/workflows` as long as
 `.forgejo/workflows` exists. In both, the image is built by the .NET SDK, not by a Dockerfile, and nothing specific to
@@ -23,6 +23,7 @@ request builds it, or run the workflow on it.
 | `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a PostgreSQL 17 installed and started in the job (apt.postgresql.org), on `localhost:5432` (`ELECSTOCK_TEST_DB`), not on a service container (see below). |
 | `android` | Only for a tag `vX.Y.Z` (not a pre-release) and a manual run. Installs the JDK 17 (Temurin), the `maui-android` workload and the Android packages the app needs (`InstallAndroidDependencies`), then publishes `src/ElecStock.Appli` for `net10.0-android`: one APK (arm64 and x64), signed with the release key, in the `android-apk` artifact. A tag also adds it to the F-Droid repository when `FDROID_DIR` is set (§4). Nothing is cached: about 1 GB is downloaded per run. |
 | `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `main` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
+| `windows app` | Same runs as `android`, and only when the variable `WINDOWS_RUNNER` is `true` (skipped otherwise). On a Windows runner (label `windows`, §2), publishes `src/ElecStock.Appli` for `net10.0-windows10.0.19041.0` with the publish profile `Windows` (a folder with .NET and the Windows App SDK inside, nothing to install on the PC) and zips it: `ElecStock-<version>-win-x64.zip` in the `windows-app` artifact. The public zip is on the GitHub release (§7). |
 
 - **Version**: a tag `v1.1.0` builds 1.1.0; anything else builds `<Version of Directory.Build.props>-ci.<run number>`.
   After a release, raise that `Version` (1.0.0 → 1.0.1): otherwise `main` (`edge`) is built as `1.0.0-ci.<run>`,
@@ -62,6 +63,102 @@ with a host folder): the runner's configuration must then hand the socket to the
 container is not enough. The test database is started in the job, and the server image is built by the SDK.
 No extra runner is needed for Android: the job installs its tools itself. A runner whose image already holds the JDK,
 the workload and the Android SDK would only save the downloads.
+
+### Windows runner (optional)
+
+The Windows app (WinUI) only builds on Windows: the `windows app` job asks for a runner labelled `windows`, a
+`forgejo-runner` running on a Windows machine in host mode (no containers, the job runs on the machine itself). Until
+one exists, leave the variable `WINDOWS_RUNNER` unset: the job is skipped. Otherwise a tag would leave it waiting.
+
+**Where.** Your Windows PC is the simplest: the job only runs for a release tag or by hand, so the PC just has to be
+on then (a job waits in the queue until a runner takes it). For a runner that is always there, a Windows VM on the
+Linux host (below).
+
+**The machine, once** (PowerShell as administrator):
+
+1. The tools: the .NET 10 SDK, then `dotnet workload install maui-windows maui-android` (or `maui`; the project also
+   targets Android, and its restore needs both), Git, Node.js LTS (the actions `checkout` and `upload-artifact` are
+   JavaScript) and PowerShell 7 (`pwsh`, the job's shell):
+   ```powershell
+   winget install Microsoft.DotNet.SDK.10 Git.Git OpenJS.NodeJS.LTS Microsoft.PowerShell
+   ```
+2. **Long paths.** The Windows App SDK files go deep in `obj\` (about 150 characters below the checkout): above
+   260 characters in all, the build fails with `MSB3030: Could not copy the file
+   "…\MsixContent\WindowsAppSdk.AppxDeploymentExtensions.Desktop-EventLog-Instrumentation.dll"`. Keep the runner's
+   folders short (`C:\fr` below) and turn long paths on:
+   ```powershell
+   Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled 1
+   git config --system core.longpaths true
+   ```
+3. **The runner.** Forgejo publishes `forgejo-runner` for Linux only; it builds for Windows from its sources (Go,
+   no cgo), here in a Go container on any machine with Docker, at the version of the Linux runner:
+   ```bash
+   docker run --rm -v "$PWD:/out" golang:1.26 sh -c 'git clone -q --depth 1 --branch v13.2.1 \
+     https://code.forgejo.org/forgejo/runner.git /src && cd /src \
+     && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o /out/forgejo-runner.exe .'
+   ```
+   Copy `forgejo-runner.exe` into `C:\fr`, then:
+   ```powershell
+   cd C:\fr
+   .\forgejo-runner.exe generate-config > config.yml
+   ```
+   In `config.yml`, set `host.workdir_parent: C:\fr\w` (the jobs' folders, instead of `%USERPROFILE%\.cache\act`)
+   and `runner.capacity: 1`. Then register it with a token from the repository's *Settings › Actions › Runners ›
+   Create new runner*, at Forgejo's own address (its `ROOT_URL`, the one the clones use: the job checks out from it):
+   ```powershell
+   .\forgejo-runner.exe register -c config.yml --no-interactive --instance http://<forgejo host>:3000 `
+     --token <token> --name windows --labels windows:host
+   ```
+4. **Start it with Windows**, as your user (the jobs use its `dotnet` and its NuGet cache), at logon:
+   ```powershell
+   $action = New-ScheduledTaskAction -Execute C:\fr\forgejo-runner.exe -Argument 'daemon -c config.yml' -WorkingDirectory C:\fr
+   Register-ScheduledTask forgejo-runner -Action $action -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) `
+     -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1))
+   ```
+   (`Start-ScheduledTask forgejo-runner` to start it now.) It should show as *Idle* in *Runners*.
+5. *Settings › Actions › Variables* › **`WINDOWS_RUNNER`** = `true`, on the repository or your user.
+
+Test it with *Actions › CI › Run workflow*: the `windows app` job should end with the `windows-app` artifact (about
+115 MB, 3 to 5 minutes once the NuGet packages are cached).
+
+- **Host mode runs the job as you, on your machine**: a workflow pushed to the repository can run anything there.
+  Register this runner on the repository only, not on your user, and keep pushes to people you trust.
+- `register` is marked deprecated in favour of `server.connections` in `config.yml`, but still works in 13.2.1.
+
+**A Windows VM on the Linux host instead.** [dockur/windows](https://github.com/dockur/windows) runs Windows in QEMU
+inside a container, next to Forgejo in its compose. It needs KVM on the host (`/dev/kvm`: hardware virtualisation on,
+or nested virtualisation if the host is itself a VM), about 8 GB of RAM and 100 GB of disk for it, and a Windows
+licence to use it for good. Then the steps above inside the VM (web console on port 8006, or RDP):
+
+```yaml
+  windows-runner:
+    image: dockurr/windows
+    container_name: windows-runner
+    environment:
+      VERSION: "11"        # Windows 11 Pro, downloaded from Microsoft at the first start
+      RAM_SIZE: "8G"
+      CPU_CORES: "4"
+      DISK_SIZE: "100G"
+      USERNAME: "runner"
+      PASSWORD: "CHANGE_ME"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8006:8006"        # web console
+      - "3389:3389/tcp"    # RDP
+      - "3389:3389/udp"
+    volumes:
+      - CHANGE_TO_COMPOSE_DATA_PATH/windows:/storage
+    restart: unless-stopped
+    stop_grace_period: 2m
+```
+
+The VM reaches the network through its container: register the runner at Forgejo's LAN address, as from a PC. In the
+VM, start the runner at boot rather than at logon (`New-ScheduledTaskTrigger -AtStartup`, task run as the `runner`
+user with *Run whether user is logged on or not*).
 
 ## 3. Publishing the image
 
@@ -179,7 +276,8 @@ builds and tests everything, publishes nothing, the APK as a run artifact).
 | `build-test` | Builds the server and runs the tests, the service tests on a `postgres:17-alpine` service (`localhost:5432`). |
 | `docker image` | Builds the server image for `linux-x64` and `linux-arm64` (one image index, `ContainerRuntimeIdentifiers`) and pushes it to `ghcr.io/<owner>/elecstock-server`: tags `X.Y.Z`, `X.Y`, `latest` (a pre-release, its own tag only). Logs in with the job's `GITHUB_TOKEN` (`packages: write`). |
 | `android` | Same build as on Forgejo (same `versionCode`), signed with the same key: an APK from GitHub and one from F-Droid update each other. |
-| `release` | Creates the GitHub release of the tag (`ElecStock X.Y.Z`, a pre-release for `vX.Y.Z-…`), with the APK `ElecStock-X.Y.Z.apk`, the `docker pull` line and the notes generated from the commits. |
+| `windows app` | Same build as on Forgejo, on a GitHub Windows runner (`windows-latest`), which installs the workloads `maui-windows` and `maui-android` itself (a few minutes): the zip `ElecStock-X.Y.Z-win-x64.zip`. |
+| `release` | Creates the GitHub release of the tag (`ElecStock X.Y.Z`, a pre-release for `vX.Y.Z-…`), with the APK `ElecStock-X.Y.Z.apk`, the Windows zip, the `docker pull` line and the notes generated from the commits. |
 
 Once:
 

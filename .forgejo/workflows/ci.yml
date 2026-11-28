@@ -32,15 +32,20 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     # The service tests drop and migrate the database elecstock_test for each test. Same image and credentials as the
     # dev database (postgres-compose/); the user is superuser, so the migrations create the database.
+    # The runner puts the jobs on a shared Docker network: the service alias "postgres" can also name the service of
+    # another job (a concurrent or cancelled run) or any other "postgres" container there, and the tests then reach
+    # several servers in turn ("database elecstock_test does not exist"). So the tests use an alias of this run only.
     services:
       postgres:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: elecstock
           POSTGRES_PASSWORD: password
+        options: --network-alias elecstock-test-db-${{ github.run_id }}
     env:
+      TEST_DB_HOST: elecstock-test-db-${{ github.run_id }}
       # Set explicitly, so the service tests fail instead of skipping themselves when the database does not answer.
-      ELECSTOCK_TEST_DB: Host=postgres;Port=5432;Database=elecstock_test;Username=elecstock;Password=password
+      ELECSTOCK_TEST_DB: Host=elecstock-test-db-${{ github.run_id }};Port=5432;Database=elecstock_test;Username=elecstock;Password=password
     steps:
       - uses: actions/checkout@v4
 
@@ -65,18 +70,24 @@ jobs:
       - name: Build the server
         run: dotnet build src/ElecStock.Server -c Release -p:Version=${{ steps.version.outputs.version }}
 
-      # PostgreSQL only listens on TCP once its first start (initdb) is over.
+      # PostgreSQL only listens on TCP once its first start (initdb) is over. The alias must name this service only.
       - name: Wait for PostgreSQL
         shell: bash
         run: |
+          echo "Containers named postgres on the job network: $(getent ahostsv4 postgres | awk '{print $1}' | sort -u | xargs)"
           for _ in $(seq 60); do
-            if (exec 3<>/dev/tcp/postgres/5432) 2>/dev/null; then
-              echo "PostgreSQL answers on postgres:5432"
+            if (exec 3<>/dev/tcp/$TEST_DB_HOST/5432) 2>/dev/null; then
+              addresses=$(getent ahostsv4 "$TEST_DB_HOST" | awk '{print $1}' | sort -u)
+              if [ "$(echo "$addresses" | wc -l)" -ne 1 ]; then
+                echo "::error::$TEST_DB_HOST names several containers: $(echo $addresses)."
+                exit 1
+              fi
+              echo "PostgreSQL answers on $TEST_DB_HOST:5432 ($addresses)"
               exit 0
             fi
             sleep 1
           done
-          echo "::error::The postgres service does not answer on postgres:5432."
+          echo "::error::The postgres service does not answer on $TEST_DB_HOST:5432 (the runner must pass the service options to docker)."
           exit 1
 
       - name: Test

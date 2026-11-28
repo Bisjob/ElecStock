@@ -20,7 +20,7 @@ request builds it, or run the workflow on it.
 
 | Job | What it does |
 |---|---|
-| `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a `postgres:17-alpine` service, reached as `postgres:5432` (`ELECSTOCK_TEST_DB`). |
+| `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a `postgres:17-alpine` service, reached through an alias of the run, `elecstock-test-db-<run id>:5432` (`ELECSTOCK_TEST_DB`): the jobs share the runner's Docker network, where `postgres` can name several containers. |
 | `android` | Only for a tag `vX.Y.Z` (not a pre-release) and a manual run. Installs the JDK 17 (Temurin), the `maui-android` workload and the Android packages the app needs (`InstallAndroidDependencies`), then publishes `src/ElecStock.Appli` for `net10.0-android`: one APK (arm64 and x64), signed with the release key, in the `android-apk` artifact. A tag also adds it to the F-Droid repository when `FDROID_DIR` is set (§4). Nothing is cached: about 1 GB is downloaded per run. |
 | `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `main` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
 

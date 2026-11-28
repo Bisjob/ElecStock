@@ -33,6 +33,18 @@ public interface IStockApi
     Task FetchDatasheetAsync(int partId, CancellationToken ct = default);
     Task DeleteDatasheetAsync(int partId, CancellationToken ct = default);
 
+    // ---------- KiCad library ----------
+
+    Task<KicadLibraryDto> GetKicadLibraryAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Adds or replaces library items from a <c>.kicad_sym</c>, <c>.kicad_mod</c>, <c>.step</c>/<c>.stp</c>/<c>.wrl</c> or a zip of them.
+    /// With a part, its empty links are filled with what the upload brings; a source (link, how it was made) is kept on every item.
+    /// </summary>
+    Task<KicadUploadResult> UploadKicadFileAsync(string fileName, Stream content, int? partId = null, string? source = null, CancellationToken ct = default);
+    Task<KicadItemDto> UpdateKicadItemAsync(int id, KicadItemEdit edit, CancellationToken ct = default);
+    /// <summary>Removes an item no part links to (and no symbol extends).</summary>
+    Task DeleteKicadItemAsync(int id, CancellationToken ct = default);
+
     // ---------- projects ----------
 
     Task<List<ProjectSummary>> GetProjectsAsync(CancellationToken ct = default);

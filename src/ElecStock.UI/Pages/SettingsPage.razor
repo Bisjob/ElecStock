@@ -46,7 +46,7 @@
 
     <div class="card pad section">
         <h2>Export</h2>
-        <p class="muted small">A zip in the stock folder format (inventory.csv, allocations.csv, sheets, photos, datasheets) plus CSVs of the locations, projects and orders.
+        <p class="muted small">A zip in the stock folder format (inventory.csv, allocations.csv, sheets, photos, datasheets, KiCad library) plus CSVs of the locations, projects and orders.
             The full backup remains the database dump and the AppData volume of the server.</p>
         <a class="btn" href="@ExternalUrl("api/export")" target="_blank"><Icon Name="download" /> Download the export</a>
     </div>
@@ -54,7 +54,7 @@
     <div class="card pad section">
         <h2>Import</h2>
         <p class="muted small">An export zip, or a zipped stock folder (at least <span class="mono">inventory.csv</span>; also <span class="mono">allocations.csv</span>, <span class="mono">Sheets/</span>,
-            <span class="mono">Media/</span>, <span class="mono">Datasheets/</span>; other folders are ignored).</p>
+            <span class="mono">Media/</span>, <span class="mono">Datasheets/</span>, <span class="mono">KiCad/</span>; other folders are ignored).</p>
         <label class="check"><input type="checkbox" @bind="_replace" /> Replace the current stock (the database is emptied, history included; stored files go to the trash folder)</label>
         <div class="row gap" style="margin-top:10px">
             <label class="btn @(_importing ? "" : "primary")" style="position:relative">
@@ -68,7 +68,7 @@
                 <Icon Name="check" />
                 <div>
                     <strong>Imported:</strong> @_report.Parts parts, @_report.Sheets sheets, @_report.Photos photos, @_report.FreeNotes notes, @_report.Datasheets datasheets,
-                    @_report.Locations locations, @_report.Projects projects, @_report.Revisions revisions, @_report.Allocations allocation lines.
+                    @_report.KicadItems KiCad library items, @_report.Locations locations, @_report.Projects projects, @_report.Revisions revisions, @_report.Allocations allocation lines.
                     @if (_report.Warnings.Count > 0)
                     {
                         <ul>@foreach (var w in _report.Warnings) { <li>@w</li> }</ul>

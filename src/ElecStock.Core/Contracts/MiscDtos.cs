@@ -76,6 +76,7 @@ public static class ActivityKinds
     public const string OrderReceived = "order.received";
     public const string LocationChanged = "location.changed";
     public const string Import = "import";
+    public const string KicadChanged = "kicad.changed";
 }
 
 /// <summary>A change made on the server, pushed to every open client so it refreshes.</summary>
@@ -88,6 +89,7 @@ public sealed class ImportReport
     public int Photos { get; set; }
     public int FreeNotes { get; set; }
     public int Datasheets { get; set; }
+    public int KicadItems { get; set; }
     public int Locations { get; set; }
     public int Projects { get; set; }
     public int Revisions { get; set; }

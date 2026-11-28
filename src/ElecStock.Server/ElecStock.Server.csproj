@@ -10,6 +10,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- Served by /kicad/sync.ps1 with the server address filled in. -->
+		<EmbeddedResource Include="Kicad\sync.ps1" LogicalName="ElecStock.Server.Kicad.sync.ps1" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\ElecStock.Data\ElecStock.Data.csproj" />
 		<ProjectReference Include="..\ElecStock.UI\ElecStock.UI.csproj" />
 	</ItemGroup>

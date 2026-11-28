@@ -6,6 +6,7 @@ using ElecStock.Contracts;
 using ElecStock.Csv;
 using ElecStock.Data.Entities;
 using ElecStock.Data.Files;
+using ElecStock.Kicad;
 using Microsoft.EntityFrameworkCore;
 
 namespace ElecStock.Data.Services;
@@ -13,8 +14,8 @@ namespace ElecStock.Data.Services;
 /// <summary>
 /// Imports a stock folder (zipped, the format of the export or of the earlier desktop app): <c>inventory.csv</c>, <c>allocations.csv</c>,
 /// the <c>.md</c> sheets (<c>Components/</c>, <c>Modules/</c>, or <c>Sheets/</c> of an export),
-/// <c>Media/&lt;ref&gt;/</c> (photos, <c>media.json</c>, <c>notes.md</c>) and <c>Datasheets/*.pdf</c>.
-/// Other folders (KiCad, 3D, Docs…) are ignored.
+/// <c>Media/&lt;ref&gt;/</c> (photos, <c>media.json</c>, <c>notes.md</c>), <c>Datasheets/*.pdf</c> and the KiCad library
+/// (<c>KiCad/*.kicad_sym</c>, <c>KiCad/*.pretty/*.kicad_mod</c>, <c>KiCad/3D/*.step</c>). Other folders (3D, Docs…) are ignored.
 /// </summary>
 public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStore files, ImageProcessor images, TimeProvider time)
 {
@@ -66,6 +67,9 @@ public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStor
                 Qty = row.GetValueOrDefault("qty", ""),
                 DatasheetUrl = row.GetValueOrDefault("datasheet_url", ""),
                 Notes = row.GetValueOrDefault("notes", ""),
+                KicadSymbol = row.GetValueOrDefault("kicad_symbol", ""),
+                KicadFootprint = row.GetValueOrDefault("kicad_footprint", ""),
+                Kicad3dModel = row.GetValueOrDefault("kicad_3d_model", ""),
                 CreatedAt = now,
                 UpdatedAt = now,
             };
@@ -182,6 +186,45 @@ public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStor
 
         await db.SaveChangesAsync(ct);
 
+        // ---------- KiCad library ----------
+        var kicadFiles = src.Files()
+            .Where(f => (f.StartsWith("KiCad/", StringComparison.OrdinalIgnoreCase) && f.Count(c => c == '/') == 1 && KicadLib.KindOf(f) == KicadItemKind.Symbol)
+                || (f.StartsWith("KiCad/", StringComparison.OrdinalIgnoreCase) && f.Count(c => c == '/') == 2
+                    && f.Split('/')[1].EndsWith(".pretty", StringComparison.OrdinalIgnoreCase) && KicadLib.KindOf(f) == KicadItemKind.Footprint)
+                || (f.StartsWith("KiCad/3D/", StringComparison.OrdinalIgnoreCase) && f.Count(c => c == '/') == 2 && KicadLib.KindOf(f) == KicadItemKind.Model))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+        var kicadItems = new List<KicadFile>();
+        foreach (var file in kicadFiles)
+        {
+            try
+            {
+                await using var stream = src.Open(file);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer, ct);
+                kicadItems.AddRange(KicadFiles.Read(file, buffer.ToArray()));
+            }
+            catch (StockException ex)
+            {
+                report.Warnings.Add($"{file}: {ex.Message}");
+            }
+        }
+        var duplicates = kicadItems.GroupBy(i => (i.Kind, i.Name.ToLowerInvariant())).Where(g => g.Count() > 1).ToList();
+        foreach (var d in duplicates) report.Warnings.Add($"KiCad: {KicadLib.Title(d.Key.Kind)} '{d.First().Name}' found {d.Count()} times, the first one is imported.");
+        kicadItems = kicadItems.GroupBy(i => (i.Kind, i.Name.ToLowerInvariant())).Select(g => g.First()).ToList();
+        if (kicadItems.Count > 0)
+        {
+            try
+            {
+                await KicadLibrary.UpsertAsync(db, files, kicadItems, now, ct);
+                report.KicadItems = kicadItems.Count;
+            }
+            catch (StockException ex)
+            {
+                report.Warnings.Add($"KiCad library not imported: {ex.Message}");
+            }
+        }
+        await db.SaveChangesAsync(ct);
+
         // ---------- projects, devices, revisions, allocations ----------
         if (src.ReadText("allocations.csv") is { } allocationsText)
         {
@@ -285,6 +328,7 @@ public sealed class StockImporter(IDbContextFactory<StockDb> dbFactory, FileStor
         await db.Projects.ExecuteDeleteAsync(ct);
         await db.Parts.ExecuteDeleteAsync(ct);
         await db.Locations.ExecuteDeleteAsync(ct);
+        await db.KicadItems.ExecuteDeleteAsync(ct);
         await db.Activities.ExecuteDeleteAsync(ct);
         files.TrashAll();
     }

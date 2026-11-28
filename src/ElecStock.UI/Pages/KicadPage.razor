@@ -1,0 +1,150 @@
+@page "/kicad"
+@inherits StockComponentBase
+
+<PageTitle>KiCad library · ElecStock</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1>KiCad library</h1>
+        <div class="grow"></div>
+        <a class="btn" href="@ExternalUrl("kicad/library.zip")" target="_blank"><Icon Name="download" /> Zip</a>
+        <label class="btn primary" style="position:relative">
+            <Icon Name="upload" /> @(_uploading ? "Uploading…" : "Add files")
+            <InputFile OnChange="Upload" multiple accept=".kicad_sym,.kicad_mod,.step,.stp,.wrl,.zip" disabled="@_uploading"
+                       style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+        </label>
+    </div>
+    <p class="muted" style="margin-top:-6px">
+        Custom symbols, footprints and 3D models of the stock parts: library <span class="mono">@KicadLib.Nickname</span>, the same on every PC.
+        Parts link to it from their KiCad tab (<span class="mono">Stock:…</span>), next to links to the standard KiCad libraries.
+        A <span class="mono">.kicad_sym</span> gives one item per symbol; a file with the name of an item replaces it.
+    </p>
+
+    <div class="card pad section">
+        <h2>On each PC</h2>
+        <p class="muted small">Copies the library to the folder of the user variable <span class="mono">@KicadLib.PathVariable</span> (created as <span class="mono">~\ElecStock-Library</span>)
+            and sets it. Run it again after a change (version <span class="mono">@_library?.Version</span>); restart KiCad after the first run.</p>
+        <pre class="mono" style="white-space:pre-wrap">@SyncCommand</pre>
+        <button class="btn small" @onclick="async () => await Js.CopyAsync(SyncCommand)"><Icon Name="copy" Size="15" /> Copy</button>
+        <p class="muted small" style="margin-bottom:0">Library tables (KiCad → Preferences → Manage Symbol / Footprint Libraries), nickname <span class="mono">@KicadLib.Nickname</span>:
+            <span class="mono">${@KicadLib.PathVariable}/@KicadLib.SymbolFile</span> and <span class="mono">${@KicadLib.PathVariable}/@KicadLib.FootprintDir</span>.</p>
+    </div>
+
+    @if (_library == null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (_library.Items.Count == 0)
+    {
+        <EmptyState Icon="cpu" Title="The library is empty" Text="Add .kicad_sym, .kicad_mod, .step files or a zip of them (a part's KiCad tab also links them to the part)." />
+    }
+    else
+    {
+        <div class="chips section">
+            @foreach (var (kind, title) in Kinds)
+            {
+                <button class="chip @(_kind == kind ? "on" : "")" @onclick="() => _kind = kind">
+                    @title <span class="count">@(kind == null ? _library.Items.Count : _library.Items.Count(i => i.Kind == kind))</span>
+                </button>
+            }
+        </div>
+        <div class="card table-wrap" style="margin-top:10px">
+            <table class="table">
+                <thead><tr><th>Kind</th><th>Name</th><th>Used by</th><th>Source</th><th>Updated</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var i in _library.Items.Where(i => _kind == null || i.Kind == _kind))
+                    {
+                        <tr>
+                            <td><Badge Kind="muted">@KicadLib.Title(i.Kind)</Badge></td>
+                            <td>
+                                <div class="mono">@i.Name</div>
+                                @if (i.Extends != null) { <div class="muted small">extends @i.Extends</div> }
+                                @foreach (var m in i.MissingModels) { <div class="small" style="color:var(--bad)">3D model not in the library: @m</div> }
+                            </td>
+                            <td class="small">
+                                @foreach (var r in i.UsedBy) { <a href="@($"stock?ref={Uri.EscapeDataString(r)}")" style="margin-right:6px">@r</a> }
+                                @if (i.UsedBy.Count == 0 && i.Kind == KicadItemKind.Model && UsedByFootprints(i) is { Count: > 0 } fps)
+                                {
+                                    <span class="muted">footprint @string.Join(", ", fps)</span>
+                                }
+                            </td>
+                            <td style="min-width:220px">
+                                <input class="input small" value="@i.Source" placeholder="Link, or how it was made" @onchange="e => SaveSource(i, e)" />
+                            </td>
+                            <td class="muted small nowrap">@Format.Date(i.UpdatedAt)</td>
+                            <td class="nowrap">
+                                <a class="icon-btn" href="@ExternalUrl(i.Url)" target="_blank" download="@DownloadName(i)" title="Download"><Icon Name="download" Size="15" /></a>
+                                <button class="icon-btn" title="Remove" @onclick="() => Delete(i)"><Icon Name="trash" Size="15" /></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    KicadLibraryDto? _library;
+    KicadItemKind? _kind;
+    bool _uploading;
+
+    static readonly (KicadItemKind? Kind, string Title)[] Kinds =
+        [(null, "All"), (KicadItemKind.Symbol, "Symbols"), (KicadItemKind.Footprint, "Footprints"), (KicadItemKind.Model, "3D models")];
+
+    string SyncCommand => $"irm {Nav.ToAbsoluteUri(Api.ExternalUrl("kicad/sync.ps1"))} | iex";
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    protected override bool IsRelevant(ChangeEvent change) => change.Scope is ChangeScope.All or ChangeScope.Kicad or ChangeScope.Part;
+
+    protected override async Task ReloadAsync() => _library = await Api.GetKicadLibraryAsync();
+
+    List<string> UsedByFootprints(KicadItemDto model) =>
+        _library!.Items.Where(f => f.Kind == KicadItemKind.Footprint && f.Models.Any(m => KicadLib.StockModelName(m)?.Equals(model.Name, StringComparison.OrdinalIgnoreCase) == true))
+            .Select(f => f.Name).ToList();
+
+    static string DownloadName(KicadItemDto i) => i.Kind switch
+    {
+        KicadItemKind.Symbol => i.Name + ".kicad_sym",
+        KicadItemKind.Footprint => i.Name + ".kicad_mod",
+        _ => i.Name,
+    };
+
+    async Task Upload(InputFileChangeEventArgs e)
+    {
+        _uploading = true;
+        var names = new List<string>();
+        var skipped = new List<string>();
+        await Try(async () =>
+        {
+            foreach (var file in e.GetMultipleFiles(50))
+            {
+                await using var stream = file.OpenReadStream(64L * 1024 * 1024);
+                var result = await Api.UploadKicadFileAsync(file.Name, stream);
+                names.AddRange(result.Added.Concat(result.Replaced).Select(i => i.Name));
+                skipped.AddRange(result.Skipped);
+            }
+            await ReloadAsync();
+        });
+        _uploading = false;
+        if (names.Count > 0) Toasts.Success($"Added: {string.Join(", ", names)}" + (skipped.Count > 0 ? $" ({skipped.Count} other files of the zip ignored)" : ""));
+    }
+
+    async Task SaveSource(KicadItemDto item, ChangeEventArgs e) =>
+        await Try(async () =>
+        {
+            await Api.UpdateKicadItemAsync(item.Id, new KicadItemEdit { Source = e.Value?.ToString() ?? "" });
+            await ReloadAsync();
+        });
+
+    async Task Delete(KicadItemDto item)
+    {
+        if (!await Js.ConfirmAsync($"Remove the {KicadLib.Title(item.Kind)} {item.Name} from the library? Its file goes to the server trash folder; the PCs drop it at their next sync.")) return;
+        await Try(async () =>
+        {
+            await Api.DeleteKicadItemAsync(item.Id);
+            await ReloadAsync();
+        }, $"{item.Name} removed");
+    }
+}

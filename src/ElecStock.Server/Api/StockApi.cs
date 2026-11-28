@@ -54,6 +54,13 @@ public static class StockApi
         api.MapPost("/parts/{id:int}/datasheet/fetch", async (int id, StockService s, CancellationToken ct) => { await s.FetchDatasheetAsync(id, ct); return Results.NoContent(); });
         api.MapDelete("/parts/{id:int}/datasheet", async (int id, StockService s, CancellationToken ct) => { await s.DeleteDatasheetAsync(id, ct); return Results.NoContent(); });
 
+        // ---------- KiCad library ----------
+        api.MapGet("/kicad", (StockService s, CancellationToken ct) => s.GetKicadLibraryAsync(ct));
+        api.MapPost("/kicad/upload", ([FromQuery] string fileName, [FromQuery] int? partId, [FromQuery] string? source, HttpRequest request, StockService s, CancellationToken ct) =>
+            s.UploadKicadFileAsync(fileName, request.Body, partId, source, ct));
+        api.MapPut("/kicad/{id:int}", (int id, KicadItemEdit edit, StockService s, CancellationToken ct) => s.UpdateKicadItemAsync(id, edit, ct));
+        api.MapDelete("/kicad/{id:int}", async (int id, StockService s, CancellationToken ct) => { await s.DeleteKicadItemAsync(id, ct); return Results.NoContent(); });
+
         // ---------- projects ----------
         api.MapGet("/projects", (StockService s, CancellationToken ct) => s.GetProjectsAsync(ct));
         api.MapGet("/projects/{id:int}", async (int id, StockService s, CancellationToken ct) => OkOrNotFound(await s.GetProjectAsync(id, ct)));

@@ -16,6 +16,7 @@ public sealed class StockDb(DbContextOptions<StockDb> options) : DbContext(optio
     public DbSet<OrderLine> OrderLines => Set<OrderLine>();
     public DbSet<Photo> Photos => Set<Photo>();
     public DbSet<Activity> Activities => Set<Activity>();
+    public DbSet<KicadItem> KicadItems => Set<KicadItem>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
     {
@@ -32,6 +33,9 @@ public sealed class StockDb(DbContextOptions<StockDb> options) : DbContext(optio
             e.Property(p => p.Ref).HasMaxLength(100).UseCollation(CaseInsensitive);
             e.Property(p => p.Category).HasMaxLength(50);
             e.Property(p => p.Qty).HasMaxLength(50);
+            e.Property(p => p.KicadSymbol).HasMaxLength(300);
+            e.Property(p => p.KicadFootprint).HasMaxLength(300);
+            e.Property(p => p.Kicad3dModel).HasMaxLength(500);
             e.HasOne(p => p.Location).WithMany(l => l.Parts).OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -80,6 +84,13 @@ public sealed class StockDb(DbContextOptions<StockDb> options) : DbContext(optio
             e.HasOne(p => p.Part).WithMany(p => p.Photos).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(p => p.Project).WithMany(p => p.Photos).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(p => p.Revision).WithMany(r => r.Photos).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<KicadItem>(e =>
+        {
+            e.HasIndex(i => new { i.Kind, i.Name }).IsUnique();
+            e.Property(i => i.Name).HasMaxLength(200).UseCollation(CaseInsensitive);
+            e.Property(i => i.Extends).HasMaxLength(200);
         });
 
         b.Entity<Activity>(e =>

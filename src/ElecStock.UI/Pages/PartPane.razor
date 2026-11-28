@@ -56,6 +56,7 @@ else
             @TabButton(Tab.Photos, "Photos", p.PhotoCount)
             @TabButton(Tab.Sheet, "Sheet", null)
             @TabButton(Tab.Datasheet, "Datasheet", null)
+            @TabButton(Tab.Kicad, "KiCad", null)
             @TabButton(Tab.Notes, "Notes", null)
             @TabButton(Tab.History, "History", null)
         </div>
@@ -203,6 +204,57 @@ else
                 }
                 break;
 
+            case Tab.Kicad:
+                <div class="form-grid">
+                    <label class="field span-all"><span>Symbol (Library:Name)</span>
+                        <input class="input mono" list="kicad-symbols" @bind="_edit.KicadSymbol" @bind:event="oninput" placeholder="Device:R, MCU_Espressif:ESP32-C3, Stock:…" /></label>
+                    <label class="field span-all"><span>Footprint (Library:Name)</span>
+                        <input class="input mono" list="kicad-footprints" @bind="_edit.KicadFootprint" @bind:event="oninput" placeholder="Resistor_SMD:R_0603_1608Metric, Stock:…" /></label>
+                    <label class="field span-all"><span>3D model, only when the footprint has none (or the wrong one)</span>
+                        <input class="input mono" list="kicad-models" @bind="_edit.Kicad3dModel" @bind:event="oninput" placeholder="${ELEC_STOCK}/KiCad/3D/….step" /></label>
+                    <datalist id="kicad-symbols">@foreach (var i in LibraryItems(KicadItemKind.Symbol)) { <option value="@i.Link" /> }</datalist>
+                    <datalist id="kicad-footprints">@foreach (var i in LibraryItems(KicadItemKind.Footprint)) { <option value="@i.Link" /> }</datalist>
+                    <datalist id="kicad-models">@foreach (var i in LibraryItems(KicadItemKind.Model)) { <option value="@i.Link" /> }</datalist>
+                </div>
+                <div class="row gap" style="margin-top:12px">
+                    <button class="btn primary" disabled="@(!IsDirty || Busy)" @onclick="Save"><Icon Name="check" /> Save</button>
+                    @if (IsDirty)
+                    {
+                        <button class="btn" @onclick="ResetEdit">Revert</button>
+                    }
+                    <div class="grow"></div>
+                    <label class="btn small" style="position:relative">
+                        <Icon Name="upload" Size="15" /> @(_uploading ? "Uploading…" : "Add files to the library")
+                        <InputFile OnChange="UploadKicad" multiple accept=".kicad_sym,.kicad_mod,.step,.stp,.wrl,.zip" disabled="@_uploading"
+                                   style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+                    </label>
+                </div>
+                <p class="muted small">Standard KiCad libraries need nothing more than the links. A custom symbol (.kicad_sym), footprint (.kicad_mod), 3D model (.step, .wrl)
+                    or a zip of them (SnapEDA, Ultra Librarian…) goes to the stock library as <span class="mono">Stock:…</span>, synced on every PC, and fills the empty links above.</p>
+
+                <div class="section">
+                    <header><h3>In the stock library</h3><div class="grow"></div><a class="small" href="kicad">Whole library</a></header>
+                    @if (LinkedItems.Count == 0)
+                    {
+                        <p class="muted small">No file of the stock library is linked to this part.</p>
+                    }
+                    <div class="list">
+                        @foreach (var i in LinkedItems)
+                        {
+                            <div class="list-item">
+                                <Badge Kind="muted">@KicadLib.Title(i.Kind)</Badge>
+                                <div class="main">
+                                    <div class="mono">@i.Name</div>
+                                    @if (i.Source.Length > 0) { <div class="sub">@i.Source</div> }
+                                    @foreach (var m in i.MissingModels) { <div class="sub" style="color:var(--bad)">3D model missing from the library: @m</div> }
+                                </div>
+                                <a class="icon-btn" href="@ExternalUrl(i.Url)" target="_blank" download="@DownloadName(i)" title="Download"><Icon Name="download" Size="16" /></a>
+                            </div>
+                        }
+                    </div>
+                </div>
+                break;
+
             case Tab.Notes:
                 <div class="md-toolbar">
                     <span class="muted small grow">Free notes: measurements, tests, wiring. Saved as you type.</span>
@@ -279,7 +331,7 @@ else
     [Parameter] public EventCallback<int> OnSelect { get; set; }
     [Parameter] public EventCallback<PartEdit> OnNewSimilar { get; set; }
 
-    enum Tab { Details, Photos, Sheet, Datasheet, Notes, History }
+    enum Tab { Details, Photos, Sheet, Datasheet, Kicad, Notes, History }
 
     PartDetail? _detail;
     PartEdit _edit = new();
@@ -293,6 +345,8 @@ else
     bool _showLocation, _showOrder;
     LocationEdit _location = new();
     AddToOrder _order = new();
+    KicadLibraryDto? _library;
+    bool _uploading;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -315,7 +369,7 @@ else
 
     protected override bool IsRelevant(ChangeEvent change) =>
         _detail != null && (change.Scope == ChangeScope.All || (change.Scope == ChangeScope.Part && change.Id == _detail.Part.Id)
-            || change.Scope is ChangeScope.Project or ChangeScope.Order or ChangeScope.Location);
+            || change.Scope is ChangeScope.Project or ChangeScope.Order or ChangeScope.Location or ChangeScope.Kicad);
 
     protected override Task ReloadAsync() => LoadAsync(resetEdit: false);
 
@@ -330,6 +384,7 @@ else
             await OnClose.InvokeAsync();
             return;
         }
+        _library = await Api.GetKicadLibraryAsync();
         if (resetEdit || !wasDirty) ResetEdit();
         if (resetEdit || _notesSave == null) _notes = _detail.FreeNotes;
         _order = new AddToOrder { PartId = _detail.Part.Id, Qty = Math.Max(1, _detail.Part.Reserved - _detail.Part.ParsedQty.Value) };
@@ -338,18 +393,14 @@ else
     void ResetEdit()
     {
         if (_detail == null) return;
-        var p = _detail.Part;
-        _edit = new PartEdit
-        {
-            Id = p.Id, Ref = p.Ref, Category = p.Category, Designation = p.Designation, Qty = p.Qty,
-            LocationId = p.LocationId, DatasheetUrl = p.DatasheetUrl, Notes = p.Notes,
-        };
+        _edit = PartEdit.From(_detail.Part);
     }
 
     static PartEdit Clone(PartEdit e) => new()
     {
         Id = e.Id, Ref = e.Ref, Category = e.Category, Designation = e.Designation, Qty = e.Qty,
         LocationId = e.LocationId, DatasheetUrl = e.DatasheetUrl, Notes = e.Notes,
+        KicadSymbol = e.KicadSymbol, KicadFootprint = e.KicadFootprint, Kicad3dModel = e.Kicad3dModel,
     };
 
     bool IsDirty => _detail == null
@@ -357,7 +408,8 @@ else
         : _edit.Ref.Trim() != _detail.Part.Ref || _edit.Category.Trim().ToLowerInvariant() != _detail.Part.Category
           || _edit.Designation.Trim() != _detail.Part.Designation || _edit.Qty.Trim() != _detail.Part.Qty
           || _edit.LocationId != _detail.Part.LocationId || _edit.DatasheetUrl.Trim() != _detail.Part.DatasheetUrl
-          || _edit.Notes.Trim() != _detail.Part.Notes;
+          || _edit.Notes.Trim() != _detail.Part.Notes || _edit.KicadSymbol.Trim() != _detail.Part.KicadSymbol
+          || _edit.KicadFootprint.Trim() != _detail.Part.KicadFootprint || _edit.Kicad3dModel.Trim().Replace('\\', '/') != _detail.Part.Kicad3dModel;
 
     RenderFragment TabButton(Tab tab, string title, int? count) =>
         @<button class="tab @(_tab == tab ? "on" : "")" @onclick="() => _tab = tab">
@@ -411,6 +463,7 @@ else
                 return;
             }
             _detail = saved;
+            _library = await Api.GetKicadLibraryAsync();
             ResetEdit();
             Toasts.Success("Saved");
         });
@@ -435,7 +488,53 @@ else
             Designation = p.Designation,
             LocationId = p.LocationId,
             DatasheetUrl = p.DatasheetUrl,
+            KicadSymbol = p.KicadSymbol,
+            KicadFootprint = p.KicadFootprint,
+            Kicad3dModel = p.Kicad3dModel,
         });
+    }
+
+    IEnumerable<KicadItemDto> LibraryItems(KicadItemKind kind) => _library?.Items.Where(i => i.Kind == kind) ?? [];
+
+    /// <summary>Library items linked to the part, plus the 3D models its stock footprint uses.</summary>
+    List<KicadItemDto> LinkedItems
+    {
+        get
+        {
+            if (_library == null || _detail == null) return [];
+            var linked = _library.Items.Where(i => i.UsedBy.Contains(_detail.Part.Ref, StringComparer.OrdinalIgnoreCase)).ToList();
+            var models = linked.SelectMany(i => i.Models).Select(KicadLib.StockModelName).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            linked.AddRange(_library.Items.Where(i => i.Kind == KicadItemKind.Model && models.Contains(i.Name) && !linked.Contains(i)));
+            return linked;
+        }
+    }
+
+    static string DownloadName(KicadItemDto i) => i.Kind switch
+    {
+        KicadItemKind.Symbol => i.Name + ".kicad_sym",
+        KicadItemKind.Footprint => i.Name + ".kicad_mod",
+        _ => i.Name,
+    };
+
+    async Task UploadKicad(InputFileChangeEventArgs e)
+    {
+        _uploading = true;
+        var added = new List<string>();
+        var linked = new List<string>();
+        await Try(async () =>
+        {
+            foreach (var file in e.GetMultipleFiles(20))
+            {
+                await using var stream = file.OpenReadStream(64L * 1024 * 1024);
+                var result = await Api.UploadKicadFileAsync(file.Name, stream, _detail!.Part.Id);
+                added.AddRange(result.Added.Concat(result.Replaced).Select(i => i.Name));
+                linked.AddRange(result.Linked);
+            }
+            await LoadAsync(resetEdit: !IsDirty);
+        });
+        _uploading = false;
+        if (added.Count > 0)
+            Toasts.Success($"Library: {string.Join(", ", added)}" + (linked.Count > 0 ? $" · linked {string.Join(", ", linked)}" : ""));
     }
 
     async Task<bool> SaveSheet(string markdown) =>

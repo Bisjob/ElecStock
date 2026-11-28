@@ -21,6 +21,7 @@ public static class DataServiceCollectionExtensions
         services.AddSingleton<FileStore>();
         services.AddSingleton<ImageProcessor>();
         services.AddSingleton<StockImporter>();
+        services.AddSingleton<KicadLibrary>();
         services.AddScoped<CallerContext>();
         services.AddScoped<StockService>();
         services.AddScoped<IStockApi>(sp => sp.GetRequiredService<StockService>());

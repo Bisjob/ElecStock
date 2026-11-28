@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 using ElecStock.Contracts;
 using ElecStock.Data.Files;
 using ElecStock.Data.Services;
+using ElecStock.Kicad;
 using ElecStock.Stock;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -16,7 +18,7 @@ namespace ElecStock.Server.Mcp;
 /// is checked the same way, written to the history as "Mcp" and shown live in the open apps.
 /// </summary>
 [McpServerToolType]
-public sealed class StockTools(StockService stock, CallerContext caller, FileStore files)
+public sealed class StockTools(StockService stock, CallerContext caller, FileStore files, IHttpContextAccessor http, IOptions<ServerOptions> server)
 {
     public const string Instructions = """
         The user's electronics stock, shared by all their projects.
@@ -33,6 +35,10 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
           (update_sheet) with: key characteristics, pinout, used in, gotchas, links.
         - The part notes hold facts about the part, never project usage (that is what allocations are for).
           Edit the free notes only when the user asks.
+        - KiCad: get_part gives the part's symbol, footprint and 3D model. Stock:<name> links are in the stock KiCad library
+          (get_kicad_library), synced on every PC to ${ELEC_STOCK}/KiCad. When a design uses a stock part, take its links.
+          When you find or make the right symbol/footprint for a part, record it (update_part with kicadSymbol /
+          kicadFootprint); a custom one is uploaded to the library first (get_kicad_library explains how).
         """;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -54,6 +60,14 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    /// <summary>The server as Claude reaches it (the MCP request), else the configured public address.</summary>
+    string BaseUrl()
+    {
+        var request = http.HttpContext?.Request;
+        if (request != null) return $"{request.Scheme}://{request.Host}{request.PathBase}/";
+        return server.Value.PublicBaseUrl.TrimEnd('/') + "/";
     }
 
     async Task<PartDetail> RequirePart(string reference) =>
@@ -82,7 +96,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
     public Task<string> SearchParts(
         [Description("Words to look for, e.g. 'mosfet logic' or '10k'. Empty for all.")] string? query = null,
         [Description("Category filter: mcu, io, sensor, signal, actuator, power, ic, mosfet, transistor, diode, led, passive, connector, mechanical.")] string? category = null,
-        [Description("all | in_stock | reserved | to_buy | uncounted | no_photo")] string filter = "all",
+        [Description("all | in_stock | reserved | to_buy | uncounted | no_photo | no_kicad (no symbol or no footprint)")] string filter = "all",
         [Description("Maximum number of parts returned.")] int limit = 60) => Run(async () =>
     {
         var overview = await stock.GetStockAsync();
@@ -97,6 +111,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
                 "to_buy" => p.NeedsBuying,
                 "uncounted" => p.ParsedQty.Kind == QtyKind.Blank || p.Status == StockStatus.Check,
                 "no_photo" => p.PhotoCount == 0,
+                "no_kicad" => p.KicadSymbol.Length == 0 || p.KicadFootprint.Length == 0,
                 _ => true,
             })
             .OrderBy(p => p, Comparer<PartSummary>.Create((a, b) => PartVisuals.CompareTiles(a.Ref, a.Category, b.Ref, b.Category)))
@@ -105,8 +120,9 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
     });
 
     [McpServerTool(Name = "get_part", ReadOnly = true), Description(
-        "Everything about one part: quantities, location, notes, technical sheet (Markdown), the user's free notes, photo "
-        + "captions and markers (pinouts), project lines, orders and recent history.")]
+        "Everything about one part: quantities, location, notes, KiCad symbol/footprint/3D model (with download links for "
+        + "the stock library files), technical sheet (Markdown), the user's free notes, photo captions and markers (pinouts), "
+        + "project lines, orders and recent history.")]
     public Task<string> GetPart([Description("Part ref, e.g. IRF4905 or R-4k7.")] string reference) => Run(async () =>
     {
         var d = await RequirePart(reference);
@@ -123,6 +139,7 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
             datasheetUrl = p.DatasheetUrl.Length > 0 ? p.DatasheetUrl : null,
             offlineDatasheet = p.HasLocalDatasheet,
             notes = p.Notes.Length > 0 ? p.Notes : null,
+            kicad = await KicadOf(p),
             sheet = d.Sheet,
             freeNotes = d.FreeNotes.Length > 0 ? d.FreeNotes : null,
             photos = d.Photos.Select(ph => new
@@ -144,6 +161,25 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
             history = d.History.Take(10).Select(h => $"{h.At.ToLocalTime():yyyy-MM-dd} [{h.Source}] {h.Summary}"),
         });
     });
+
+    async Task<object?> KicadOf(PartSummary p)
+    {
+        if (p.KicadSymbol.Length == 0 && p.KicadFootprint.Length == 0 && p.Kicad3dModel.Length == 0) return null;
+        var library = await stock.GetKicadLibraryAsync();
+        var linked = library.Items.Where(i => i.UsedBy.Contains(p.Ref, StringComparer.OrdinalIgnoreCase)).ToList();
+        // A stock footprint brings its own 3D models.
+        var models = linked.Where(i => i.Kind == KicadItemKind.Footprint).SelectMany(i => i.Models).Select(KicadLib.StockModelName).OfType<string>().ToList();
+        linked.AddRange(library.Items.Where(i => i.Kind == KicadItemKind.Model && models.Contains(i.Name, StringComparer.OrdinalIgnoreCase) && !linked.Contains(i)));
+        return new
+        {
+            symbol = p.KicadSymbol.Length > 0 ? p.KicadSymbol : null,
+            footprint = p.KicadFootprint.Length > 0 ? p.KicadFootprint : null,
+            model3d = p.Kicad3dModel.Length > 0 ? p.Kicad3dModel : null,
+            stockLibraryFiles = linked.Count > 0
+                ? linked.Select(i => new { kind = i.Kind.ToString().ToLowerInvariant(), i.Name, url = BaseUrl() + i.Url, source = i.Source.Length > 0 ? i.Source : null })
+                : null,
+        };
+    }
 
     [McpServerTool(Name = "get_part_photos", ReadOnly = true), Description(
         "Returns the photos of a part as images (cover first), with their captions and numbered markers. Use it when the "
@@ -490,12 +526,16 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         [Description("Quantity: a number, '10+' for at least 10, empty when not counted.")] string qty = "",
         [Description("Location code (created when unknown).")] string? location = null,
         [Description("Datasheet link.")] string? datasheetUrl = null,
-        [Description("Facts about the part (never project usage).")] string? notes = null) => Run(async () =>
+        [Description("Facts about the part (never project usage).")] string? notes = null,
+        [Description(KicadSymbolHelp)] string? kicadSymbol = null,
+        [Description(KicadFootprintHelp)] string? kicadFootprint = null,
+        [Description(Kicad3dModelHelp)] string? kicad3dModel = null) => Run(async () =>
     {
         var saved = await stock.SavePartAsync(new PartEdit
         {
             Ref = reference, Category = category, Designation = designation, Qty = qty,
             LocationId = await LocationId(location), DatasheetUrl = datasheetUrl ?? "", Notes = notes ?? "",
+            KicadSymbol = kicadSymbol ?? "", KicadFootprint = kicadFootprint ?? "", Kicad3dModel = kicad3dModel ?? "",
         });
         return Out(Brief(saved.Part));
     });
@@ -511,22 +551,74 @@ public sealed class StockTools(StockService stock, CallerContext caller, FileSto
         [Description("Why the quantity changes (count, found more…).")] string? qtyReason = null,
         [Description("Location code (created when unknown); empty string removes it.")] string? location = null,
         string? datasheetUrl = null,
-        [Description("Facts about the part, replaces the current notes.")] string? notes = null) => Run(async () =>
+        [Description("Facts about the part, replaces the current notes.")] string? notes = null,
+        [Description(KicadSymbolHelp + " Empty string removes it.")] string? kicadSymbol = null,
+        [Description(KicadFootprintHelp + " Empty string removes it.")] string? kicadFootprint = null,
+        [Description(Kicad3dModelHelp + " Empty string removes it.")] string? kicad3dModel = null) => Run(async () =>
     {
         var p = (await RequirePart(reference)).Part;
-        var saved = await stock.SavePartAsync(new PartEdit
+        var edit = PartEdit.From(p);
+        edit.Ref = newRef ?? p.Ref;
+        edit.Category = category ?? p.Category;
+        edit.Designation = designation ?? p.Designation;
+        edit.Qty = qty ?? p.Qty;
+        edit.QtyReason = qtyReason ?? "via Claude";
+        if (location != null) edit.LocationId = await LocationId(location);
+        edit.DatasheetUrl = datasheetUrl ?? p.DatasheetUrl;
+        edit.Notes = notes ?? p.Notes;
+        edit.KicadSymbol = kicadSymbol ?? p.KicadSymbol;
+        edit.KicadFootprint = kicadFootprint ?? p.KicadFootprint;
+        edit.Kicad3dModel = kicad3dModel ?? p.Kicad3dModel;
+        var saved = await stock.SavePartAsync(edit);
+        return Out(new
         {
-            Id = p.Id,
-            Ref = newRef ?? p.Ref,
-            Category = category ?? p.Category,
-            Designation = designation ?? p.Designation,
-            Qty = qty ?? p.Qty,
-            QtyReason = qtyReason ?? "via Claude",
-            LocationId = location == null ? p.LocationId : await LocationId(location),
-            DatasheetUrl = datasheetUrl ?? p.DatasheetUrl,
-            Notes = notes ?? p.Notes,
+            part = Brief(saved.Part),
+            kicad = new { symbol = saved.Part.KicadSymbol, footprint = saved.Part.KicadFootprint, model3d = saved.Part.Kicad3dModel },
         });
-        return Out(Brief(saved.Part));
+    });
+
+    const string KicadSymbolHelp = "KiCad symbol as Library:Name, e.g. Device:R, MCU_Espressif:ESP32-C3, or Stock:<name> for the stock library.";
+    const string KicadFootprintHelp = "KiCad footprint as Library:Name, e.g. Resistor_SMD:R_0603_1608Metric, or Stock:<name>.";
+    const string Kicad3dModelHelp = "3D model path, only when the footprint has none or the wrong one, e.g. ${ELEC_STOCK}/KiCad/3D/<file>.step.";
+
+    // ---------- KiCad library ----------
+
+    [McpServerTool(Name = "get_kicad_library", ReadOnly = true), Description(
+        "The stock KiCad library (nickname Stock): custom symbols, footprints and 3D models stored on the server, with the parts "
+        + "using each one, download links, and how to sync it to this PC or upload new files.")]
+    public Task<string> GetKicadLibrary() => Run(async () =>
+    {
+        var library = await stock.GetKicadLibraryAsync();
+        var baseUrl = BaseUrl();
+        return Out(new
+        {
+            library.Version,
+            layout = new
+            {
+                pathVariable = $"{KicadLib.PathVariable} = the synced folder (holds KiCad/)",
+                symbols = $"${{{KicadLib.PathVariable}}}/{KicadLib.SymbolFile}",
+                footprints = $"${{{KicadLib.PathVariable}}}/{KicadLib.FootprintDir}",
+                models = KicadLib.ModelPrefix + "<file>",
+            },
+            sync = $"PowerShell on the PC: irm {baseUrl}kicad/sync.ps1 | iex  (downloads {baseUrl}kicad/library.zip when the version changed, "
+                + "sets the user variable ELEC_STOCK; restart KiCad after the first sync)",
+            upload = $"curl -f -X POST --data-binary @<file> \"{baseUrl}kicad/upload?fileName=<file name>&part=<ref>&source=<where it comes from>\" (a .kicad_sym gives one item per symbol; "
+                + "also .kicad_mod, .step/.stp/.wrl or a .zip of them; same name = replaced; part is optional and gets the links it lacks; "
+                + "source: the link it was downloaded from, or how it was made). "
+                + "Make or fix symbols and footprints with KiCad / Copperpour, never by editing the files as text.",
+            items = library.Items.Select(i => new
+            {
+                kind = i.Kind.ToString().ToLowerInvariant(),
+                i.Name,
+                i.Link,
+                url = baseUrl + i.Url,
+                usedBy = i.UsedBy.Count > 0 ? i.UsedBy : null,
+                extends = i.Extends,
+                source = i.Source.Length > 0 ? i.Source : null,
+                models = i.Models.Count > 0 ? i.Models : null,
+                missingModels = i.MissingModels.Count > 0 ? i.MissingModels : null,
+            }),
+        });
     });
 
     [McpServerTool(Name = "update_sheet"), Description(

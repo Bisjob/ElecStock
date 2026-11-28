@@ -13,10 +13,11 @@ namespace ElecStock.Data.Services;
 /// <summary>
 /// Writes the stock as a zip in the stock folder format (<c>inventory.csv</c>,
 /// <c>allocations.csv</c>, <c>Sheets/</c>, <c>Media/&lt;ref&gt;/</c>, <c>Datasheets/</c>), which
-/// <see cref="StockImporter"/> reads back, plus CSVs of what the folder never had (locations,
-/// projects, revisions, orders). A readable snapshot; the real backup is the database dump.
+/// <see cref="StockImporter"/> reads back, plus the KiCad library (<c>KiCad/</c>, the layout of the sync) and CSVs
+/// of what the folder never had (locations, projects, revisions, orders). A readable snapshot; the real backup is
+/// the database dump.
 /// </summary>
-public sealed class StockExporter(IDbContextFactory<StockDb> dbFactory, FileStore files)
+public sealed class StockExporter(IDbContextFactory<StockDb> dbFactory, FileStore files, KicadLibrary kicad)
 {
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -32,12 +33,15 @@ public sealed class StockExporter(IDbContextFactory<StockDb> dbFactory, FileStor
                 .ToList();
 
             Text(zip, "inventory.csv", CsvText.Write(
-                ["ref", "category", "designation", "qty", "location", "sheet", "datasheet_url", "notes"],
+                ["ref", "category", "designation", "qty", "location", "sheet", "datasheet_url", "notes", "kicad_symbol", "kicad_footprint", "kicad_3d_model"],
                 parts.Select(p => new[]
                 {
                     p.Ref, p.Category, p.Designation, p.Qty, p.Location?.Name is { Length: > 0 } n ? n : p.Location?.Code ?? "",
-                    p.Sheet != null ? $"Sheets/{p.Ref}.md" : "", p.DatasheetUrl, p.Notes,
+                    p.Sheet != null ? $"Sheets/{p.Ref}.md" : "", p.DatasheetUrl, p.Notes, p.KicadSymbol, p.KicadFootprint, p.Kicad3dModel,
                 })));
+
+            var kicadItems = await db.KicadItems.AsNoTracking().ToListAsync(ct);
+            if (kicadItems.Count > 0) kicad.Write(zip, kicadItems, manifest: false);
 
             foreach (var part in parts)
             {

@@ -13,7 +13,7 @@ public sealed class StorageOptions
 }
 
 /// <summary>
-/// Files of the stock on disk: <c>photos/</c>, <c>thumbs/</c>, <c>datasheets/</c>, <c>icons/</c> (served under
+/// Files of the stock on disk: <c>photos/</c>, <c>thumbs/</c>, <c>datasheets/</c>, <c>icons/</c>, <c>cad/</c> (served under
 /// <c>/files/</c>) and <c>trash/</c> (removed files, never served). Storage paths are relative,
 /// with forward slashes, and file names are GUIDs so renaming a part never moves a file.
 /// </summary>
@@ -23,8 +23,10 @@ public sealed class FileStore
     public const string ThumbsDir = "thumbs";
     public const string DatasheetsDir = "datasheets";
     public const string IconsDir = "icons";
+    /// <summary>Files of the KiCad library: symbols, footprints, 3D models.</summary>
+    public const string CadDir = "cad";
     public const string TrashDir = "trash";
-    public static readonly string[] ServedDirs = [PhotosDir, ThumbsDir, DatasheetsDir, IconsDir];
+    public static readonly string[] ServedDirs = [PhotosDir, ThumbsDir, DatasheetsDir, IconsDir, CadDir];
 
     public FileStore(IOptions<StorageOptions> options, IHostEnvironment env)
     {

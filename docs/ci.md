@@ -20,7 +20,7 @@ request builds it, or run the workflow on it.
 
 | Job | What it does |
 |---|---|
-| `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a `postgres:17-alpine` service, reached as `postgres:5432` (`ELECSTOCK_TEST_DB`). |
+| `build-test` | Builds `src/ElecStock.Server` and runs every `*.Tests` project (`dotnet test --project`, JUnit reports in the `test-results` artifact). The service tests run on a PostgreSQL 17 installed and started in the job (apt.postgresql.org), on `localhost:5432` (`ELECSTOCK_TEST_DB`), not on a service container (see below). |
 | `android` | Only for a tag `vX.Y.Z` (not a pre-release) and a manual run. Installs the JDK 17 (Temurin), the `maui-android` workload and the Android packages the app needs (`InstallAndroidDependencies`), then publishes `src/ElecStock.Appli` for `net10.0-android`: one APK (arm64 and x64), signed with the release key, in the `android-apk` artifact. A tag also adds it to the F-Droid repository when `FDROID_DIR` is set (§4). Nothing is cached: about 1 GB is downloaded per run. |
 | `docker image` | Builds the server image with the .NET SDK (`dotnet publish -t:PublishContainer`, the container settings of `ElecStock.Server.csproj`), for linux-x64. It pushes it for a tag `vX.Y.Z` (tags `X.Y.Z`, `X.Y`, `latest`; a pre-release such as `v1.1.0-rc.1` gets its own tag only) and for a push on `main` (tag `edge`). Pull requests and manual runs write the image to an archive in the job and push nothing. |
 
@@ -39,7 +39,12 @@ request builds it, or run the workflow on it.
 - **No Docker in the jobs**: the SDK pulls the base image (`mcr.microsoft.com/dotnet/aspnet:10.0`), adds the published
   server and pushes the result to the registry itself, over HTTP.
 - **Service tests**: with `ELECSTOCK_TEST_DB` set, `StockServiceTests` fails when the database does not answer instead
-  of skipping itself as it does on a PC without the dev database, so a broken service shows as a red build.
+  of skipping itself as it does on a PC without the dev database, so a broken database shows as a red build.
+- **Why no PostgreSQL service container**: the runner puts the jobs on a shared Docker network (`forgejo`), where the
+  service alias `postgres` can also name another job's service (a concurrent or cancelled run) or any other container
+  called `postgres`. The tests then reached several servers in turn and failed at random with
+  `database "elecstock_test" does not exist`. A service alias of the run is no way out: the runner refuses
+  `--network-alias` in the service options. The step prints what `postgres` names on that network.
 - **Actions**: `actions/checkout` comes from Forgejo's mirror (`data.forgejo.org`); `actions/setup-dotnet` and
   `actions/setup-java` are taken from GitHub; the test results and the APK use `forgejo/upload-artifact@v4`, since
   `actions/upload-artifact@v4` does not work with Forgejo. An action that calls api.github.com sends it the job's
@@ -48,14 +53,13 @@ request builds it, or run the workflow on it.
 
 ## 2. Runner
 
-The workflow asks for the label `ubuntu-latest` and runs its jobs in containers (the PostgreSQL service joins the job's
-network). A `forgejo-runner` with the label `ubuntu-latest` on `catthehacker/ubuntu:act-22.04` does it, registered
+The workflow asks for the label `ubuntu-latest` and runs its jobs in containers. A `forgejo-runner` with the label `ubuntu-latest` on `catthehacker/ubuntu:act-22.04` does it, registered
 on this repository, or on your user (`/user/settings/actions/runners`) to serve all your repositories.
 
 Only the F-Droid step (optional, §4) uses the host's Docker in the job (`docker create` of the `fdroidserver` image,
 with a host folder): the runner's configuration must then hand the socket to the jobs (`container.docker_host: automount` and
 `/var/run/docker.sock` in `valid_volumes`); mounting it in the runner's own
-container is not enough. The PostgreSQL service is started by the runner, and the server image is built by the SDK.
+container is not enough. The test database is started in the job, and the server image is built by the SDK.
 No extra runner is needed for Android: the job installs its tools itself. A runner whose image already holds the JDK,
 the workload and the Android SDK would only save the downloads.
 

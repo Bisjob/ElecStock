@@ -2,13 +2,13 @@ name: CI
 
 # Runs for a push on main, a version tag "vX.Y.Z", a pull request, or by hand (Run workflow); a push on another branch
 # starts nothing (its pull request builds it). Builds the server and runs the tests (the service tests on a PostgreSQL
-# service). The server image, built by the .NET SDK (container settings in ElecStock.Server.csproj, no Dockerfile), is
+# started in the job). The server image, built by the .NET SDK (container settings in ElecStock.Server.csproj, no Dockerfile), is
 # pushed to the container registry of this Forgejo for a version tag (tags "X.Y.Z", "X.Y" and "latest") and for main
 # (tag "edge"); pull requests and manual runs only check that it builds. The Android app (MAUI) is built for a release
 # tag and signed, then added to a self-hosted F-Droid repository when the variable FDROID_DIR is set; a manual run
 # builds it too (artifact only). The public releases (ghcr.io image, APK on GitHub) come from .github/workflows/release.yml.
 #
-# Needs a runner labelled "ubuntu-latest" that runs its jobs in containers (for the PostgreSQL service), the secret
+# Needs a runner labelled "ubuntu-latest" that runs its jobs in containers, the secret
 # REGISTRY_TOKEN (and, when the runner reaches Forgejo by another name than the machines pulling the image, the variable
 # REGISTRY) to publish the image, and the secrets ANDROID_KEYSTORE and ANDROID_KEYSTORE_PASSWORD to sign the app.
 # Optional: the variable FDROID_DIR (and the host's Docker socket in the jobs) to publish it on F-Droid. See docs/ci.md.
@@ -30,17 +30,16 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-    # The service tests drop and migrate the database elecstock_test for each test. Same image and credentials as the
-    # dev database (postgres-compose/); the user is superuser, so the migrations create the database.
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: elecstock
-          POSTGRES_PASSWORD: password
+    # The service tests drop and migrate the database elecstock_test for each test, on a PostgreSQL 17 started in the
+    # job ("Start PostgreSQL"), not in a service container: the runner puts the jobs on a shared Docker network, where
+    # the service alias "postgres" can also name another job's service (a concurrent or cancelled run) or any other
+    # "postgres" container, and the tests then reached several servers in turn ('database "elecstock_test" does not
+    # exist'). A service alias of the run is no way out: the runner refuses --network-alias in the service options.
+    # Same version and credentials as the dev database (postgres-compose/); the user is superuser, so the migrations
+    # create the database.
     env:
       # Set explicitly, so the service tests fail instead of skipping themselves when the database does not answer.
-      ELECSTOCK_TEST_DB: Host=postgres;Port=5432;Database=elecstock_test;Username=elecstock;Password=password
+      ELECSTOCK_TEST_DB: Host=localhost;Port=5432;Database=elecstock_test;Username=elecstock;Password=password
     steps:
       - uses: actions/checkout@v4
 
@@ -65,18 +64,30 @@ jobs:
       - name: Build the server
         run: dotnet build src/ElecStock.Server -c Release -p:Version=${{ steps.version.outputs.version }}
 
-      # PostgreSQL only listens on TCP once its first start (initdb) is over.
-      - name: Wait for PostgreSQL
+      # PostgreSQL 17 from the PostgreSQL apt repository (Ubuntu 22.04 has 14), in this job's container only.
+      - name: Start PostgreSQL
         shell: bash
         run: |
-          for _ in $(seq 60); do
-            if (exec 3<>/dev/tcp/postgres/5432) 2>/dev/null; then
-              echo "PostgreSQL answers on postgres:5432"
+          set -euo pipefail
+          # What "postgres" names on the shared network: anything here is another job's or another stack's container.
+          echo "Containers named postgres on the job network: $(getent ahostsv4 postgres | awk '{print $1}' | sort -u | xargs || true)"
+          sudo=""; [ "$(id -u)" -eq 0 ] || sudo="sudo"
+          as_postgres() { if [ -z "$sudo" ]; then runuser -u postgres -- "$@"; else sudo -u postgres "$@"; fi; }
+          export DEBIAN_FRONTEND=noninteractive
+          $sudo apt-get update -qq
+          $sudo apt-get install -y -qq postgresql-common >/dev/null
+          $sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          $sudo apt-get install -y -qq postgresql-17 >/dev/null
+          $sudo pg_ctlcluster 17 main start
+          as_postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE elecstock LOGIN SUPERUSER PASSWORD 'password'"
+          for _ in $(seq 30); do
+            if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then
+              echo "PostgreSQL $(as_postgres psql -tAc 'SHOW server_version') answers on localhost:5432"
               exit 0
             fi
             sleep 1
           done
-          echo "::error::The postgres service does not answer on postgres:5432."
+          echo "::error::PostgreSQL does not answer on localhost:5432."
           exit 1
 
       - name: Test
